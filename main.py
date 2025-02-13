@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime
 from dash import dash_table
 import plotly.graph_objects as go
+from gigachat import GigaChat
 
 client_file_path = "client_5.csv"
 mapping_file_path = "maping_csv.csv"
@@ -180,14 +181,26 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background']},
     ], style={'padding': '20px'}),
 
     # График с доходом
-    dcc.Graph(id='income-plot')
+    dcc.Graph(id='income-plot'),
+
+    # Блок с рекомендациями от GigaChat
+    html.Div([
+        html.H3("Рекомендации по кредитному портфелю", style={'margin': '20px 0'}),
+        html.Div(id='llm-output', style={
+            'background': corporate_colors['card'],
+            'padding': '15px',
+            'borderRadius': '5px',
+            'whiteSpace': 'pre-wrap'  # Для форматирования текста
+        })
+    ], style={'padding': '20px'}),
 ])
 
 
 # Колбэки для обновления данных
 @callback(
     [Output('crossfilter-selection', 'data'),
-     Output('kpi-cards', 'children')],
+     Output('kpi-cards', 'children'),
+     Output('llm-output', 'children')],  # Новый выход для рекомендаций
     [Input('year-filter', 'value'),
      Input('currency-filter', 'value'),
      Input('client-filter', 'value'),
@@ -240,8 +253,20 @@ def update_data(selected_year, selected_currency, selected_client, click_amount,
         create_kpi_card("Общая сумма", f"{total_amount:,.0f}", "#d62728"),
         create_kpi_card("Погашенная сумма", f"{total_closed_amount:,.0f}", "#9467bd")
     ]
+    kpi_data = {
+        "total_loans": total_loans,
+        "total_closed": total_closed,
+        "total_amount": total_amount,
+        "total_closed_amount": total_closed_amount
+    }
+    # Получаем рекомендации
+    try:
+        response = send_prompt_to_llm(kpi_data)
+        recommendation = response.choices[0].message.content
+    except Exception as e:
+        recommendation = f"Ошибка получения рекомендаций: {str(e)}"
 
-    return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards
+    return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, recommendation
 
 @callback(
     [Output('loan-kind-pie', 'figure'),
@@ -276,22 +301,26 @@ def update_additional_elements(filtered_data, n_clicks, income):
         filtered_df,
         names='trade_loan_kind_code',
         values='account_amt_credit_limit',
-        title='Распределение по видам займов'
+        title='Распределение по видам займов',
+        hole=0.6  # Добавьте этот параметр для создания кольца
     ).update_layout(
         plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
-        font_color=corporate_colors['text']
+        font_color=corporate_colors['text'],
+        showlegend=True  # Опционально: улучшает отображение легенды
     )
 
     loan_purpose_fig = px.pie(
         filtered_df,
         names='trade_acct_type1',
         values='account_amt_credit_limit',
-        title='Распределение по целям кредитов'
+        title='Распределение по целям кредитов',
+        hole=0.6  # Добавьте этот параметр
     ).update_layout(
         plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
-        font_color=corporate_colors['text']
+        font_color=corporate_colors['text'],
+        showlegend=True
     )
 
     # Таблица с задолженностью
@@ -428,6 +457,52 @@ def update_graphs(filtered_data):
         )
 
     return fig1, fig2, fig3, fig4
+
+
+def send_prompt_to_llm(kpi_data: dict):
+    credentials = 'MzgyZTdkNGItZTc5MS00NmU3LTg4NjctNDA0MjVlOGNjYjY5OjU1YWIyOWVmLTc4NWEtNGYyOC1iZDg2LTk3YzBkMzYxMmQzNg=='  # Замените на реальные учетные данные
+
+    prompt = f"""
+    Анализ KPI кредитного портфеля:
+    - Всего кредитов: {kpi_data['total_loans']}
+    - Погашено кредитов: {kpi_data['total_closed']}
+    - Общая сумма: {kpi_data['total_amount']:,.0f}
+    - Погашенная сумма: {kpi_data['total_closed_amount']:,.0f}
+
+    Задача: Дать развернутый анализ по каждому kpi. Дать конкретные рекомендации по каждому kpi для заемщика по улучшению показателей. Ответ оформить как маркированный список.
+    """
+
+    with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+        return giga.chat(prompt)
+# def send_prompt_to_llm(kpi_cards: dict):
+#     credentials = ''
+#
+#     # Формируем промпт для LLM
+#     prompt = f"""
+#     Вы получили данные о кредитах заемщика:
+#     1. KPI оп кредитам: {kpi_cards}
+#
+#
+#     Задача:
+#     1. Дать рекомендации заемщику по улучшению KPI по займам.
+#     3. Отдай ответ предствить в виде:
+#
+#     {{
+#         "kpi1": {{
+#             "направление": <рекомендация>
+#         }},
+#         "kpi2": {{
+#             "направление": <рекомендация>
+#         }}
+#     }}
+#
+#
+#         """
+#     with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+#         response = giga.chat(prompt)
+#         # print(response.choices[0].message.content)
+#
+#     return response
 
 
 if __name__ == '__main__':
