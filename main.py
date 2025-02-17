@@ -6,10 +6,15 @@ from datetime import datetime
 from dash import dash_table
 import plotly.graph_objects as go
 from gigachat import GigaChat
+from dotenv import load_dotenv
+import os
+from key_rate import get_cbr_key_rate
+
+load_dotenv()
 
 client_file_path = "client_5.csv"
 mapping_file_path = "maping_csv.csv"
-
+giga_token = os.getenv('TOKEN_GIGA')
 # Чтение файлов
 df = pd.read_csv(client_file_path, delimiter=';',
                          parse_dates=["fund_date", "trade_close_dt", "loan_indicator_dt"])
@@ -57,11 +62,6 @@ df['trade_acct_type1'] = pd.to_numeric(df['trade_acct_type1'], errors='coerce')
 # Маппинг (сопоставляем float)
 df['trade_acct_type1'] = df['trade_acct_type1'].map(acct_type_mapping)
 
-# # Загрузка данных
-# df = pd.read_csv(
-#     "credits.csv", sep=";",
-#     parse_dates=["fund_date", "trade_close_dt", "loan_indicator_dt"]
-# )
 
 # Предобработка данных
 df["year"] = df["fund_date"].dt.year
@@ -69,16 +69,18 @@ closed_loans = df[df["loan_indicator"] == 1]
 
 # Корпоративная цветовая схема
 corporate_colors = {
-    'background': '#F9F9F9',
-    'text': '#1E1E1E',
-    'colorscale': ['#1f77b4', '#2ca02c', '#d62728'],
+    'background': '#F5F3FF',
+    'text': '#2D1B69',
+    'colorscale': ['#7E5BEF', '#A389F4', '#C9B9FC', '#E5DEFF'],
     'card': '#FFFFFF'
 }
 
 # Создание приложения Dash
 app = dash.Dash(__name__)
 server = app.server # Gunicorn запускает Flask-сервер
-app.layout = html.Div(style={'backgroundColor': corporate_colors['background']}, children=[
+app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
+                             'fontFamily': 'Verdana, sans-serif'  # Шрифтовая схема
+                             }, children=[
     html.H1("Анализ кредитного портфеля", style={'textAlign': 'center', 'color': corporate_colors['text']}),
 
     # Фильтры
@@ -135,38 +137,49 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background']},
     ]),
     # Основные Графики
     html.Div([
-        # html.Div([
-    #         dcc.Graph(id='amount-by-year'),
-    #         dcc.Graph(id='count-by-year')
-    #     ], style={'width': '49%', 'display': 'inline-block'}),
-    #
-    #     html.Div([
-    #         dcc.Graph(id='cost-scatter'),
-    #         dcc.Graph(id='dynamic-line')
-    #     ], style={'width': '49%', 'display': 'inline-block', 'float': 'right'})
-    # ]),
-        dcc.Graph(id='amount-by-year', style={'width': '100%', 'padding': '10px'}),
-        dcc.Graph(id='count-by-year', style={'width': '100%', 'padding': '10px'}),
-        dcc.Graph(id='cost-scatter', style={'width': '100%', 'padding': '10px'}),
-        dcc.Graph(id='dynamic-line', style={'width': '100%', 'padding': '10px'})
+        dcc.Graph(id='amount-by-year', style={'width': '100%', 'padding': '10px','display':'none'}),
+        dcc.Graph(id='count-by-year', style={'width': '100%', 'padding': '10px','display':'none'}),
+        dcc.Graph(id='cumulative-debt', style={'width': '100%', 'padding': '10px'}),
+        dcc.Graph(id='cost-scatter', style={'width': '100%', 'padding': '10px','display':'none'}),
+        dcc.Graph(id='dynamic-line', style={'width': '100%', 'padding': '10px'}),
+
+
     ]),
     # Скрытый элемент для хранения данных о выборе
     dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='split')),
 
+    # В макет добавьте:
+    html.Div([
+        dcc.Graph(id='payment-schedule', style={'width': '100%', 'padding': '10px'})
+    ], style={'padding': '20px'}),
+
+
     # Таблица с задолженностью
     html.Div([
+        html.H3("Список непогашенных кредитов", style={'margin': '20px 0'}),
         dash_table.DataTable(
+            style_data={
+                    'backgroundColor': corporate_colors['card'],
+                    'color': corporate_colors['text']
+                },
+            style_header={
+                    'backgroundColor': '#7E5BEF',
+                    'color': 'white',
+                    'fontWeight': 'bold'
+                },
             id='arrear-table',
             columns=[
                 {'name': 'ID кредита', 'id': 'account_uid'},
                 {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
                 {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
                 {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
-                {'name': 'Дата просрочки', 'id': 'past_due_dt'}
+                {'name': 'Дата просрочки', 'id': 'past_due_dt'},
+                {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'}
             ],
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left', 'minWidth': '100px'},
             page_size=10
+
         )
     ], style={'padding': '20px'}),
     # Блок с доходом
@@ -186,11 +199,12 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background']},
     # Блок с рекомендациями от GigaChat
     html.Div([
         html.H3("Рекомендации по кредитному портфелю", style={'margin': '20px 0'}),
-        html.Div(id='llm-output', style={
+        dcc.Markdown(id='llm-output', style={
             'background': corporate_colors['card'],
             'padding': '15px',
             'borderRadius': '5px',
-            'whiteSpace': 'pre-wrap'  # Для форматирования текста
+            # 'whiteSpace': 'pre-wrap'  # Для форматирования текста
+            'border': '1px solid #EEE'
         })
     ], style={'padding': '20px'}),
 ])
@@ -242,10 +256,6 @@ def update_data(selected_year, selected_currency, selected_client, click_amount,
         total_amount = filtered_df['account_amt_credit_limit'].sum(skipna=True)
         total_closed_amount = filtered_df.loc[filtered_df['loan_indicator'] == 1, 'account_amt_credit_limit'].sum(
             skipna=True)
-    # total_loans = filtered_df.shape[0]
-    # total_closed = filtered_df[filtered_df['loan_indicator'] == 1].shape[0]
-    # total_amount = filtered_df['account_amt_credit_limit'].sum()
-    # total_closed_amount = filtered_df[filtered_df['loan_indicator'] == 1]['account_amt_credit_limit'].sum()
 
     kpi_cards = [
         create_kpi_card("Всего кредитов", total_loans, "#1f77b4"),
@@ -261,7 +271,7 @@ def update_data(selected_year, selected_currency, selected_client, click_amount,
     }
     # Получаем рекомендации
     try:
-        response = send_prompt_to_llm(kpi_data)
+        response = send_prompt_to_llm(kpi_data, giga_token)
         recommendation = response.choices[0].message.content
     except Exception as e:
         recommendation = f"Ошибка получения рекомендаций: {str(e)}"
@@ -304,10 +314,12 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title='Распределение по видам займов',
         hole=0.6  # Добавьте этот параметр для создания кольца
     ).update_layout(
+        font_family='Verdana',
+        font_color=corporate_colors['text'],
         plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
-        font_color=corporate_colors['text'],
-        showlegend=True  # Опционально: улучшает отображение легенды
+        title_font_size=18,
+        title_font_color='#5D3FBA'
     )
 
     loan_purpose_fig = px.pie(
@@ -317,10 +329,12 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title='Распределение по целям кредитов',
         hole=0.6  # Добавьте этот параметр
     ).update_layout(
+        font_family='Verdana',
+        font_color=corporate_colors['text'],
         plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
-        font_color=corporate_colors['text'],
-        showlegend=True
+        title_font_size=18,
+        title_font_color='#5D3FBA'
     )
 
     # Таблица с задолженностью
@@ -356,23 +370,69 @@ def update_additional_elements(filtered_data, n_clicks, income):
 
     return loan_kind_fig, loan_purpose_fig, table_data, income_fig
 
+# В колбэки добавьте:
+@callback(
+    Output('payment-schedule', 'figure'),
+    Input('crossfilter-selection', 'data')
+)
+def update_payment_chart(filtered_data):
+    filtered_df = pd.read_json(filtered_data, orient='split')
+
+    fig = go.Figure()
+
+    # Добавляем платежи по основному долгу
+    fig.add_trace(go.Scatter(
+        x=filtered_df['paymnt_condition_principal_terms_amt_dt'],
+        y=filtered_df['paymnt_condition_principal_terms_amt'],
+        mode='markers',
+        name='Основной долг',
+        marker_color='#7E5BEF'
+    ))
+    # Добавляем платежи по процентам
+    fig.add_trace(go.Scatter(
+        x=filtered_df['paymnt_condition_interest_terms_amt_dt'],
+        y=filtered_df['paymnt_condition_interest_terms_amt'],
+        mode='markers',
+        name='Проценты',
+        marker_color='#A389F4'
+    ))
+
+    fig.update_layout(
+        title="График платежей",
+        xaxis_title="Дата платежа",
+        yaxis_title="Сумма",
+        plot_bgcolor=corporate_colors['card'],
+        paper_bgcolor=corporate_colors['background']
+    )
+
+    return fig
 
 # Функция создания карточек KPI
 def create_kpi_card(title, value, color):
     return html.Div(
         style={
             'background': corporate_colors['card'],
-            'borderRadius': '5px',
-            'padding': '15px',
+            'border': f'2px solid {color}',
+            'borderRadius': '15px',
+            'padding': '20px',
             'margin': '10px',
-            'boxShadow': '0 4px 6px 0 rgba(0,0,0,0.1)',
+            'boxShadow': '0 4px 6px 0 rgba(93, 63, 186, 0.1)',
             'width': '22%'
         },
         children=[
-            html.H3(title, style={'margin': '0', 'color': corporate_colors['text']}),
+            html.H3(title, style={
+                'margin': '0',
+                'color': corporate_colors['text'],
+                'fontWeight': '600'
+            }),
             html.H2(
                 value,
-                style={'color': color, 'margin': '10px 0', 'fontSize': '24px'}
+                style={
+                    'color': color,
+                    'margin': '10px 0',
+                    'fontSize': '28px',
+                    'fontWeight': '700'
+                }
             )
         ]
     )
@@ -388,7 +448,7 @@ def create_kpi_card(title, value, color):
 )
 def update_graphs(filtered_data):
     filtered_df = pd.read_json(filtered_data, orient='split')
-    # Если клиент выбран, но данных нет
+
     if filtered_df.empty:
         return [
             px.scatter(title="Нет данных"),
@@ -396,6 +456,7 @@ def update_graphs(filtered_data):
             px.scatter(title="Нет данных"),
             px.scatter(title="Нет данных")
         ]
+
     # Группировка данных
     loans_by_year = filtered_df.groupby(["year", "account_amt_currency_code", "client_id"]).agg(
         total_amount=("account_amt_credit_limit", "sum"),
@@ -411,6 +472,7 @@ def update_graphs(filtered_data):
 
     # Создание графиков
     fig1 = px.bar(
+
         loans_by_year,
         x="year",
         y="total_amount",
@@ -451,58 +513,95 @@ def update_graphs(filtered_data):
     # Обновление стилей
     for fig in [fig1, fig2, fig3, fig4]:
         fig.update_layout(
+            font_family='Verdana',
+            font_color=corporate_colors['text'],
             plot_bgcolor=corporate_colors['card'],
             paper_bgcolor=corporate_colors['background'],
-            font_color=corporate_colors['text']
+            title_font_size=18,
+            title_font_color='#5D3FBA'
         )
 
     return fig1, fig2, fig3, fig4
 
 
-def send_prompt_to_llm(kpi_data: dict):
-    credentials = 'MzgyZTdkNGItZTc5MS00NmU3LTg4NjctNDA0MjVlOGNjYjY5OjU1YWIyOWVmLTc4NWEtNGYyOC1iZDg2LTk3YzBkMzYxMmQzNg=='  # Замените на реальные учетные данные
+@callback(
+    Output('cumulative-debt', 'figure'),
+    [Input('crossfilter-selection', 'data')]
+)
+def update_cumulative_debt(filtered_data):
+    filtered_df = pd.read_json(filtered_data, orient='split')
+
+    if filtered_df.empty:
+        return px.line(title="Нет данных")
+
+    # Создаем DataFrame событий
+    events = []
+    for _, row in filtered_df.iterrows():
+        if pd.notnull(row['fund_date']):
+            events.append({
+                'date': row['fund_date'],
+                'amount': row['account_amt_credit_limit'] + row['overall_val_credit_total_monetary_amt'],
+                'type': 'issue'
+            })
+        if pd.notnull(row['loan_indicator_dt']) and row['loan_indicator'] == 1:
+            events.append({
+                'date': row['loan_indicator_dt'],
+                'amount': -(row['account_amt_credit_limit'] + row['overall_val_credit_total_monetary_amt']),
+                'type': 'repayment'
+            })
+
+    df_events = pd.DataFrame(events)
+
+    if df_events.empty:
+        return px.line(title="Нет данных")
+
+    # Сортируем по дате и считаем нарастающий итог
+    df_events = df_events.sort_values('date')
+    df_events['cumulative'] = df_events['amount'].cumsum()
+
+    # Создаем график
+    fig = px.line(
+        df_events,
+        x='date',
+        y='cumulative',
+        title='Динамика общей задолженности',
+        color_discrete_sequence=[corporate_colors['colorscale'][0]]
+    )
+
+    fig.update_layout(
+        font_family='Verdana',
+        font_color=corporate_colors['text'],
+        plot_bgcolor=corporate_colors['card'],
+        paper_bgcolor=corporate_colors['background'],
+        title_font_size=18,
+        title_font_color='#5D3FBA',
+        xaxis_title="Дата",
+        yaxis_title="Сумма задолженности",
+        yaxis_tickformat=",.0f"
+    )
+
+    return fig
+
+def send_prompt_to_llm(kpi_data: dict, giga_token):
+
+    credentials = giga_token  # Замените на реальные учетные данные
 
     prompt = f"""
-    Анализ KPI кредитного портфеля:
+    Анализ параметров кредитной истории:
     - Всего кредитов: {kpi_data['total_loans']}
     - Погашено кредитов: {kpi_data['total_closed']}
     - Общая сумма: {kpi_data['total_amount']:,.0f}
     - Погашенная сумма: {kpi_data['total_closed_amount']:,.0f}
 
-    Задача: Дать развернутый анализ по каждому kpi. Дать конкретные рекомендации по каждому kpi для заемщика по улучшению показателей. Ответ оформить как маркированный список.
+    Задача: 1. Дать развернутый анализ по каждому параметру. Дать конкретные рекомендации по каждому параметру для заемщика по улучшению. 
+            2. Ответ оформить как маркированный список.
+            3. Указать среднюю процентную ставку потребительского кредитованя в банках : (на текущую дату {datetime.now()} составляет 21,0%+ 7%/15%)
+            Расчет не выводить!"
+         
     """
 
     with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
         return giga.chat(prompt)
-# def send_prompt_to_llm(kpi_cards: dict):
-#     credentials = ''
-#
-#     # Формируем промпт для LLM
-#     prompt = f"""
-#     Вы получили данные о кредитах заемщика:
-#     1. KPI оп кредитам: {kpi_cards}
-#
-#
-#     Задача:
-#     1. Дать рекомендации заемщику по улучшению KPI по займам.
-#     3. Отдай ответ предствить в виде:
-#
-#     {{
-#         "kpi1": {{
-#             "направление": <рекомендация>
-#         }},
-#         "kpi2": {{
-#             "направление": <рекомендация>
-#         }}
-#     }}
-#
-#
-#         """
-#     with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
-#         response = giga.chat(prompt)
-#         # print(response.choices[0].message.content)
-#
-#     return response
 
 
 if __name__ == '__main__':
