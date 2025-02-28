@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from gigachat import GigaChat
 from dotenv import load_dotenv
 import os
-from key_rate import get_cbr_key_rate
+
 
 load_dotenv()
 
@@ -17,8 +17,12 @@ mapping_file_path = "maping_csv.csv"
 giga_token = os.getenv('TOKEN_GIGA')
 # Чтение файлов
 df = pd.read_csv(client_file_path, delimiter=';',
-                         parse_dates=["fund_date", "trade_close_dt", "loan_indicator_dt"])
+                         parse_dates=["fund_date", "trade_close_dt", "loan_indicator_dt"], encoding="utf-8")
 mapping_df = pd.read_csv(mapping_file_path, delimiter=';')
+
+
+
+
 
 # Извлечение маппинга из строки 10 (ключи - числа, значения - текстовые описания)
 loan_kind_mapping_raw = mapping_df.iloc[10, 4]
@@ -70,7 +74,7 @@ closed_loans = df[df["loan_indicator"] == 1]
 # Корпоративная цветовая схема
 corporate_colors = {
     'background': '#F5F3FF',
-    'text': '#2D1B69',
+    'text': '#4B0082',
     'colorscale': ['#7E5BEF', '#A389F4', '#C9B9FC', '#E5DEFF'],
     'card': '#FFFFFF'
 }
@@ -81,7 +85,7 @@ server = app.server # Gunicorn запускает Flask-сервер
 app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                              'fontFamily': 'Verdana, sans-serif'  # Шрифтовая схема
                              }, children=[
-    html.H1("Анализ кредитного портфеля", style={'textAlign': 'center', 'color': corporate_colors['text']}),
+    html.H1("Ваш помощник по кредитам", style={'textAlign': 'center', 'color': corporate_colors['text']}),
 
     # Фильтры
     html.Div([
@@ -93,9 +97,10 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                 value='all',
                 placeholder="Выберите клиента"
             )
-        ], style={'width': '25%', 'padding': '10px'}),
+        ], style={'width': '25%', 'padding': '10px','display':'none'}),
 
         html.Div([
+            html.H3("Выберите год за который хотите узнать информацию", style={'textAlign': 'center', 'color': corporate_colors['text']}),
             dcc.Dropdown(
                 id='year-filter',
                 options=[{'label': 'Все годы', 'value': 'all'}] +
@@ -103,7 +108,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                 value='all',
                 placeholder="Выберите год"
             )
-        ], style={'width': '25%', 'padding': '10px'}),
+        ], style={'width': '35%', 'padding': '10px'}),
 
         html.Div([
             dcc.Dropdown(
@@ -113,7 +118,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                 value='all',
                 placeholder="Выберите валюту"
             )
-        ], style={'width': '25%', 'padding': '10px'})
+        ], style={'width': '25%', 'padding': '10px','display':'none'})
 
     ], style={'display': 'flex'}),
 
@@ -141,7 +146,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
         dcc.Graph(id='count-by-year', style={'width': '100%', 'padding': '10px','display':'none'}),
         dcc.Graph(id='cumulative-debt', style={'width': '100%', 'padding': '10px'}),
         dcc.Graph(id='cost-scatter', style={'width': '100%', 'padding': '10px','display':'none'}),
-        dcc.Graph(id='dynamic-line', style={'width': '100%', 'padding': '10px'}),
+        dcc.Graph(id='dynamic-line', style={'width': '100%', 'padding': '10px','display':'none'}),
 
 
     ]),
@@ -163,7 +168,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                     'color': corporate_colors['text']
                 },
             style_header={
-                    'backgroundColor': '#7E5BEF',
+                    'backgroundColor': '#4B0082',
                     'color': 'white',
                     'fontWeight': 'bold'
                 },
@@ -173,8 +178,8 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                 {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
                 {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
                 {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
-                {'name': 'Дата просрочки', 'id': 'past_due_dt'},
-                {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'}
+                {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'},
+                {'name': 'Процентная ставка', 'id': 'overall_val_credit_total_amt'}
             ],
             style_table={'overflowX': 'auto'},
             style_cell={'textAlign': 'left', 'minWidth': '100px'},
@@ -187,11 +192,32 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
         dcc.Input(
             id='income-input',
             type='number',
-            placeholder='Среднемесячный доход',
-            style={'marginRight': '10px'}
+            placeholder='Введите среднем.есячный доход',
+            style={'marginRight': '10px',
+                    'marginLeft': '10px',
+                    'width': '15%',
+                    'height': '30px',
+                    'fontSize': '18px',
+                    'fontFamily': 'Verdana',
+                    'marginBottom': '10px'
+                   }
         ),
-        html.Button('Upgrade', id='upgrade-button', n_clicks=0)
-    ], style={'padding': '20px'}),
+        html.Button('ДОБАВИТЬ',
+                    id='upgrade-button',
+                    n_clicks=0,
+                    style={
+                    'fontSize': '18px',  # Уеличен шрифт кнопки
+                    'padding': '6px 12px',  # Увеличен размер кнопки
+                    'borderRadius': '5px',
+                    'backgroundColor': '#4B0082',
+                    'color': 'white',
+                    'fontFamily': 'Verdana',
+                    'cursor': 'pointer'
+                }
+                    )
+    ], style={'padding': '20px',
+
+              }),
 
     # График с доходом
     dcc.Graph(id='income-plot'),
@@ -199,10 +225,36 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
     # Блок с рекомендациями от GigaChat
     html.Div([
         html.H3("Рекомендации по кредитному портфелю", style={'margin': '20px 0'}),
+        dcc.Input(
+                id='user-question',
+                type='text',
+                placeholder='Введите ваш вопрос...',
+                style={
+                    'width': '100%',
+                    'height': '50px',
+                    'fontSize': '18px',
+                    'fontFamily': 'Verdana',
+                    'marginBottom': '10px'
+                    }
+            ),
+        html.Button('ОТПРАВИТЬ',
+                    id='submit-question',
+                    n_clicks=0,
+                    style={
+                    'fontSize': '18px',  # Уеличен шрифт кнопки
+                    'padding': '6px 12px',  # Увеличен размер кнопки
+                    'borderRadius': '5px',
+                    'backgroundColor': '#4B0082',
+                    'color': 'white',
+                    'fontFamily': 'Verdana',
+                    'cursor': 'pointer'
+                }
+        ),
         dcc.Markdown(id='llm-output', style={
             'background': corporate_colors['card'],
             'padding': '15px',
             'borderRadius': '5px',
+            'marginTop': '10px',
             # 'whiteSpace': 'pre-wrap'  # Для форматирования текста
             'border': '1px solid #EEE'
         })
@@ -210,74 +262,164 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
 ])
 
 
-# Колбэки для обновления данных
+# Объединенный колбэк для всех выходов
 @callback(
     [Output('crossfilter-selection', 'data'),
      Output('kpi-cards', 'children'),
-     Output('llm-output', 'children')],  # Новый выход для рекомендаций
+     Output('llm-output', 'children')],
     [Input('year-filter', 'value'),
      Input('currency-filter', 'value'),
      Input('client-filter', 'value'),
      Input('amount-by-year', 'clickData'),
-     Input('count-by-year', 'clickData')]
+     Input('count-by-year', 'clickData'),
+     Input('submit-question', 'n_clicks')],
+    [State('user-question', 'value'),
+     State('crossfilter-selection', 'data')]
 )
-
-def update_data(selected_year, selected_currency, selected_client, click_amount, click_count):
+# def update_data(selected_year, selected_currency, selected_client, click_amount, click_count):
+#     ctx = dash.callback_context
+#     filtered_df = df.copy()
+def unified_callback(selected_year, selected_currency, selected_client,
+                    click_amount, click_count, n_clicks,
+                    question, filtered_data):
     ctx = dash.callback_context
-    filtered_df = df.copy()
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
+    # Обработка фильтров и KPI
+    if triggered_id in ['year-filter', 'currency-filter', 'client-filter',
+                       'amount-by-year', 'count-by-year', None]:
+        filtered_df = df.copy()
     # Фильтрация данных
-    if selected_year != 'all':
-        filtered_df = filtered_df[filtered_df['year'] == selected_year]
-    if selected_currency != 'all':
-        filtered_df = filtered_df[filtered_df['account_amt_currency_code'] == selected_currency]
-    if selected_client != 'all':  # Фильтр по клиенту
-        filtered_df = filtered_df[filtered_df['client_id'] == selected_client]
-    # Обработка кликов на графиках
-    if ctx.triggered:
-        trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
-        if trigger_id in ['amount-by-year', 'count-by-year']:
-            click_data = click_amount if trigger_id == 'amount-by-year' else click_count
-            if click_data:
-                point = click_data['points'][0]
-                filtered_df = filtered_df[
-                    (filtered_df['year'] == point['x']) &
-                    (filtered_df['account_amt_currency_code'] == point['customdata'][0]) &
-                    ((filtered_df['client_id'] == selected_client) if selected_client != 'all' else True)
-                    ]
+        if selected_year != 'all':
+            filtered_df = filtered_df[filtered_df['year'] == selected_year]
+        if selected_currency != 'all':
+            filtered_df = filtered_df[filtered_df['account_amt_currency_code'] == selected_currency]
+        if selected_client != 'all':  # Фильтр по клиенту
+            filtered_df = filtered_df[filtered_df['client_id'] == selected_client]
+        # Обработка кликов на графиках
+        if ctx.triggered:
+            trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+            if trigger_id in ['amount-by-year', 'count-by-year']:
+                click_data = click_amount if trigger_id == 'amount-by-year' else click_count
+                if click_data:
+                    point = click_data['points'][0]
+                    filtered_df = filtered_df[
+                        (filtered_df['year'] == point['x']) &
+                        (filtered_df['account_amt_currency_code'] == point['customdata'][0]) &
+                        ((filtered_df['client_id'] == selected_client) if selected_client != 'all' else True)
+                        ]
 
-    # Расчет KPI
-    # Расчет KPI с проверкой на пустые данные
-    if filtered_df.empty:
-        total_loans = total_closed = total_amount = total_closed_amount = 0
-    else:
-        total_loans = filtered_df.shape[0]
-        total_closed = filtered_df['loan_indicator'].sum()
-        total_amount = filtered_df['account_amt_credit_limit'].sum(skipna=True)
-        total_closed_amount = filtered_df.loc[filtered_df['loan_indicator'] == 1, 'account_amt_credit_limit'].sum(
-            skipna=True)
+        # Расчет KPI
+        # Расчет KPI с проверкой на пустые данные
+        if filtered_df.empty:
+            total_loans = total_closed = total_amount = total_closed_amount = 0
+        else:
+            total_loans = filtered_df.shape[0]
+            total_closed = filtered_df['loan_indicator'].sum()
+            total_amount = filtered_df['account_amt_credit_limit'].sum(skipna=True)
+            total_closed_amount = filtered_df.loc[filtered_df['loan_indicator'] == 1, 'account_amt_credit_limit'].sum(
+                skipna=True)
 
-    kpi_cards = [
-        create_kpi_card("Всего кредитов", total_loans, "#1f77b4"),
-        create_kpi_card("Погашено кредитов", total_closed, "#2ca02c"),
-        create_kpi_card("Общая сумма", f"{total_amount:,.0f}", "#d62728"),
-        create_kpi_card("Погашенная сумма", f"{total_closed_amount:,.0f}", "#9467bd")
-    ]
-    kpi_data = {
-        "total_loans": total_loans,
-        "total_closed": total_closed,
-        "total_amount": total_amount,
-        "total_closed_amount": total_closed_amount
-    }
-    # Получаем рекомендации
-    try:
-        response = send_prompt_to_llm(kpi_data, giga_token)
-        recommendation = response.choices[0].message.content
-    except Exception as e:
-        recommendation = f"Ошибка получения рекомендаций: {str(e)}"
+        kpi_cards = [
+            create_kpi_card("Всего кредитов", total_loans, "#1f77b4"),
+            create_kpi_card("Погашено кредитов", total_closed, "#2ca02c"),
+            create_kpi_card("Общая сумма", f"{total_amount:,.0f}", "#d62728"),
+            create_kpi_card("Погашенная сумма", f"{total_closed_amount:,.0f}", "#9467bd")
+        ]
+        # Рекомендации по
+        try:
+            kpi_data = {
+                "total_loans": total_loans,
+                "total_closed": total_closed,
+                "total_amount": total_amount,
+                "total_closed_amount": total_closed_amount
+            }
+        # # Получаем рекомендации
+        # try:
+            response = send_prompt_to_llm(kpi_data, giga_token)
+            recommendation = response.choices[0].message.content
+        except Exception as e:
+            recommendation = f"Ошибка получения рекомендаций: {str(e)}"
 
-    return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, recommendation
+        return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, recommendation
+    # Обработка пользовательского вопроса
+    elif triggered_id == 'submit-question' and question:
+        try:
+            # mapping_df = pd.read_csv(mapping_file_path, delimiter=';')
+            # Загрузка данных с правильными параметрами
+            mapping_df = pd.read_csv(
+                "maping_csv.csv",
+                delimiter=";",
+                skiprows=2,  # Пропускаем первые две строки (заголовок и разделитель)
+                names=["Поле", "Описание"],  # Только две колонки
+                usecols=[2, 3],  # Берем данные из 2-й и 3-й колонок файла
+                encoding='utf-8-sig'  # Для корректной работы с BOM
+            )
+            client_df = pd.read_json(filtered_data, orient='split')
 
+            # Удаляем лишние символы в названиях колонок
+            mapping_df["Поле"] = (
+                mapping_df["Поле"]
+                .str.strip()  # Удаляем пробелы
+                .str.replace("['\",]", "", regex=True)  # Удаляем кавычки и запятые
+            )
+            # Создание словаря для переименования
+            rename_dict = dict(zip(mapping_df["Поле"], mapping_df["Описание"]))
+
+            # Переименование колонок
+            client_df_rus = client_df.rename(columns=rename_dict)
+            # print(list(client_df_rus.columns))
+
+            # Формирование контекста маппинга
+            mapping_context = "\n".join([f"{row['Поле']}: {row['Описание']}" for _, row in mapping_df.iterrows()])
+            # print(mapping_context)
+
+            # Статистика с русскими названиями колонок
+            data_stats = client_df_rus.describe().to_string()
+            # print(data_stats)
+
+
+
+            # # Применяем переименование
+            # df_rus = client_df.rename(columns=rename_dict)
+
+            # # Анализ маппинга
+            # mapping_context = ""
+            # for idx, row in mapping_giga.iterrows():
+            #     mapping_context += f"Строка {idx}: {row[4]}\n"
+
+            # Формирование промпта
+            prompt = f"""
+            Вопрос пользователя: {question}
+
+            Справочник параметров:
+            {mapping_context}
+
+            Задача:
+            1. Определить соответствующий параметр из колонок: 
+            {list(client_df_rus.columns)}
+            2. Ответить на вопрос используя данные из {client_df_rus}
+            3. Дать ответ используя терминологию из справочника.
+            
+            Пример правильного ответа:
+            "Сумма платежа в августе 2023 составляет X рублей, 
+            рассчитанная на основе [русское название колонки]"
+            
+            Статистика данных (русские названия):
+            {data_stats}  
+ 
+            """
+
+            # Отправка запроса
+            with GigaChat(credentials=giga_token, verify_ssl_certs=False) as giga:
+                response = giga.chat(prompt)
+                answer = response.choices[0].message.content
+            return dash.no_update, dash.no_update, answer
+
+        except Exception as e:
+            return dash.no_update, dash.no_update, f"Ошибка: {str(e)}"
+
+    return dash.no_update, dash.no_update, "Ожидаю ваш вопрос..."
 @callback(
     [Output('loan-kind-pie', 'figure'),
      Output('loan-purpose-pie', 'figure'),
@@ -341,7 +483,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
     arrear_df = filtered_df[filtered_df['arrear_sign'] == 1]
     table_data = arrear_df[[
         'account_uid', 'arrear_amt_outstanding',
-        'arrear_calc_date', 'due_arrear_start_dt', 'past_due_dt'
+        'arrear_calc_date', 'due_arrear_start_dt', 'past_due_amt_past_due', 'overall_val_credit_total_amt'
     ]].to_dict('records')
 
     # График с доходом
@@ -599,6 +741,7 @@ def send_prompt_to_llm(kpi_data: dict, giga_token):
             Расчет не выводить!"
          
     """
+    prompt += f"\n\nДополнительный контекст маппинга:\n{mapping_df.iloc[:, 4].to_string()}"
 
     with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
         return giga.chat(prompt)

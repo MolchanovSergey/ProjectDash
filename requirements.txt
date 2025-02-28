@@ -3,3 +3,4 @@ plotly
 pandas
 gunicorn
 gigachat
+dotenv
