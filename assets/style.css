@@ -1,0 +1,21 @@
+"""
+@media (max-width: 600px) {
+    .dash-table-container {
+        overflow-x: auto;
+        font-size: 12px;
+    }
+    .dash-graph {
+        height: 300px!important;
+    }
+    .DatePickerSingle {
+        width: 100%!important;
+    }
+    .dash-dropdown {
+        font-size: 14px;
+    }
+    .kpi-card {
+        width: 100%!important;
+        margin: 5px 0!important;
+    }
+}
+"""
