@@ -1,5 +1,7 @@
+import json
+
 import dash
-from dash import dcc, html, Input, Output, callback, State
+from dash import dcc, html, Input, Output, callback, State, ALL
 import plotly.express as px
 import pandas as pd
 from datetime import datetime
@@ -129,7 +131,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
 
 
         html.Div([
-            html.H3("Выберите дату отчета", style={'textAlign': 'center', 'color': corporate_colors['text']}),
+            html.H3("Выберите дату отчета из бюро кредитных историй", style={'textAlign': 'center', 'color': corporate_colors['text']}),
             dcc.DatePickerSingle(
                 id='report-date-filter',
                 min_date_allowed=df['reporting_dt'].min(),
@@ -182,9 +184,15 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
                 ], style={'width': '100%', 'padding': '10px'}),
 
     ]),
+    # Добавить после блока с круговыми диаграммами
+    html.Div([
+        html.H3("Кредитные карты", style={'margin': '20px 0', 'color': corporate_colors['text']}),
+        html.Div(id='credit-cards-buttons'),
+        html.Div(id='credit-card-details')
+    ], style={'padding': '20px'}),
 
     # Скрытый элемент для хранения данных о выборе
-    dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='split')),
+    dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='records')),
 
     # В макет добавьте:
     html.Div([
@@ -335,7 +343,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
 
     # Блок с рекомендациями от GigaChat
     html.Div([
-        html.H3("Рекомендации по кредитному портфелю", style={'margin': '20px 0'}),
+        html.H3("Ваши персональные рекомендации по кредитам", style={'margin': '20px 0'}),
         dcc.Input(
                 id='user-question',
                 type='text',
@@ -542,7 +550,11 @@ def update_additional_elements(filtered_data, n_clicks, income):
         names='trade_loan_kind_code',
         values='account_amt_credit_limit',
         title='Распределение по видам займов',
-        hole=0.6  # Добавьте этот параметр для создания кольца
+        hole=0.7  # Добавьте этот параметр для создания кольца
+    ).update_traces(
+        textinfo='value',
+        texttemplate='%{value:,.0f} ₽',
+        textposition='outside'
     ).update_layout(
         # font_family='Verdana',
         # font_color=corporate_colors['text'],
@@ -557,7 +569,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
             y=1.02,
             xanchor="center",
             x=0.5,
-            font=dict(size=12),  # Уменьшаем размер шрифта
+            font=dict(size=9),  # Уменьшаем размер шрифта
             # itemgap = 0.5,  # Расстояние между элементами
             title = None
         ),
@@ -565,7 +577,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title_font_size=18,
         title_x=0.5,
         title_y=0.95, # Центрируем заголовок
-        height=450,
+        height=250,
         autosize=False
     )
 
@@ -575,14 +587,32 @@ def update_additional_elements(filtered_data, n_clicks, income):
         names='trade_acct_type1',
         values='account_amt_credit_limit',
         title='Распределение по целям кредитов',
-        hole=0.6  # Добавьте этот параметр
+        hole=0.7  # Добавьте этот параметр
+    ).update_traces(
+        textinfo='value',
+        texttemplate='%{value:,.0f} ₽',
+        textposition='outside'
     ).update_layout(
         font_family='Verdana',
-        font_color=corporate_colors['text'],
-        plot_bgcolor=corporate_colors['card'],
+        # font_color=corporate_colors['text'],
+        # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=9),  # Уменьшаем размер шрифта
+            # itemgap = 0.5,  # Расстояние между элементами
+            title=None
+        ),
+        margin=dict(t=100, b=10, l=50, r=50),  # Настраиваем отступы
         title_font_size=18,
-        title_font_color='#5D3FBA'
+        title_x=0.5,
+        title_y=0.95,  # Центрируем заголовок
+        height=250,
+        autosize=False
     )
     # Новая круговая диаграмма
     rate_pie_fig = px.pie(
@@ -590,14 +620,32 @@ def update_additional_elements(filtered_data, n_clicks, income):
         names='rate_category',
         values='arrear_principal_outstanding',
         title='Распределение задолженности по ставкам',
-        hole=0.6
+        hole=0.7
+    ).update_traces(
+        textinfo='value',
+        texttemplate='%{value:,.0f} ₽',
+        textposition='outside'
     ).update_layout(
         font_family='Verdana',
-        font_color=corporate_colors['text'],
-        plot_bgcolor=corporate_colors['card'],
+        # font_color=corporate_colors['text'],
+        # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=9),  # Уменьшаем размер шрифта
+            # itemgap = 0.5,  # Расстояние между элементами
+            title=None
+        ),
+        margin=dict(t=70, b=80, l=50, r=50),
         title_font_size=18,
-        title_font_color='#5D3FBA'
+        title_x=0.5,
+        title_y=0.95,  # Центрируем заголовок
+        height=250,
+        autosize=False
     )
 
     # Таблица с задолженностью
@@ -790,6 +838,178 @@ def send_prompt_to_llm(kpi_data: dict, giga_token):
 
     with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
         return giga.chat(prompt)
+
+
+# Колбэк для создания кнопок
+@callback(
+    Output('credit-cards-buttons', 'children'),
+    Input('crossfilter-selection', 'data')
+)
+def update_credit_cards_buttons(filtered_data):
+    try:
+        # Чтение и преобразование данных
+        filtered_df = pd.read_json(filtered_data, orient='split')
+
+        # Отладочный вывод структуры данных
+        print("\nСтруктура данных перед обработкой:")
+        print(filtered_df[['trade_loan_kind_code', 'arrear_sign']].dtypes)
+
+        # # Преобразование типов с обработкой ошибок
+        # filtered_df['trade_loan_kind_code'] = pd.to_numeric(
+        #     filtered_df['trade_loan_kind_code'], errors='coerce'
+        # )
+        filtered_df['arrear_sign'] = pd.to_numeric(
+            filtered_df['arrear_sign'], errors='coerce'
+        )
+
+        # Фильтрация данных
+        credit_cards = filtered_df[
+            (filtered_df['trade_loan_kind_code'] == 'Кредитная линия с лимитом задолженности') &
+            (filtered_df['arrear_sign'] == 1)
+            ]
+
+        # Создание кнопок
+        buttons = []
+        for _, row in credit_cards.iterrows():
+            try:
+                # Форматирование суммы
+                principal = float(row['arrear_principal_outstanding'])
+                formatted_principal = f"{principal:,.0f} ₽".replace(",", " ")
+
+                # Обработка минимального платежа
+                min_payment = (
+                    f"{float(row['paymnt_condition_min_paymt']):,.0f} ₽"
+                    if not pd.isna(row['paymnt_condition_min_paymt'])
+                    else "оплачен"
+                )
+
+                # Создание кнопки
+                button = html.Button(
+                    children=[
+                        html.Div(formatted_principal,
+                                 style={'fontSize': '18px',
+                                        'fontWeight': 'bold',
+                                        'marginBottom': '5px'}),
+                        html.Div(f"Минимальный платеж: {min_payment}",
+                                 style={'fontSize': '12px'})
+                    ],
+                    id={'type': 'credit-card-button',
+                        'index': str(row['account_uid'])},
+                    style={
+                        'margin': '10px',
+                        'padding': '15px',
+                        'width': '220px',
+                        'borderRadius': '10px',
+                        'backgroundColor': '#7E5BEF',
+                        'color': 'white',
+                        'cursor': 'pointer',
+                        'boxShadow': '0 2px 5px rgba(0,0,0,0.1)'
+                    }
+                )
+                buttons.append(button)
+
+            except Exception as e:
+                print(f"Ошибка при создании кнопки: {str(e)}")
+                continue
+
+        # Возвращаем результат с проверкой на пустоту
+        return (
+            html.Div(
+                buttons,
+                style={
+                    'display': 'flex',
+                    'flexWrap': 'wrap',
+                    'gap': '15px',
+                    'padding': '10px',
+                    'backgroundColor': corporate_colors['card'],
+                    'borderRadius': '8px'
+                }
+            ) if buttons else
+            html.Div("Нет активных кредитных карт",
+                     style={'color': corporate_colors['text'],
+                            'padding': '20px'})
+        )
+
+    except Exception as e:
+        print(f"Критическая ошибка в колбэке: {str(e)}")
+        return html.Div("Ошибка при загрузке данных",
+                        style={'color': 'red', 'padding': '20px'})
+
+# Колбэк для отображения деталей
+@callback(
+    [Output('credit-card-details', 'children'),
+     Output('llm-output', 'children', allow_duplicate=True)],
+    [Input({'type': 'credit-card-button', 'index': ALL}, 'n_clicks')],
+    [State('crossfilter-selection', 'data')],
+    prevent_initial_call=True
+)
+def show_credit_card_details(clicks, filtered_data):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update
+
+    try:
+        filtered_df = pd.read_json(filtered_data, orient='split')
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        account_uid = str(json.loads(button_id)['index'])
+
+        # Преобразуем account_uid к строковому типу
+        filtered_df['account_uid'] = filtered_df['account_uid'].astype(str)
+        card_data_df = filtered_df[filtered_df['account_uid'] == account_uid]
+
+        if card_data_df.empty:
+            return html.Div("Данные по карте не найдены",
+                            style={'color': 'red'}), dash.no_update
+
+        card_data = card_data_df.iloc[0]
+
+        # Создание таблицы
+        table = dash_table.DataTable(
+            columns=[
+                {'name': 'ID кредита', 'id': 'account_uid'},
+                {'name': 'Основной долг', 'id': 'arrear_principal_outstanding'},
+                {'name': 'Проценты', 'id': 'arrear_int_outstanding'},
+                {'name': 'Иные требования', 'id': 'arrear_other_amt_outstanding'},
+                {'name': '% ставка', 'id': 'overall_val_credit_total_amt'},
+                {'name': 'Начало льг. периода', 'id': 'paymnt_condition_grace_start_dt'},
+                {'name': 'Конец льг. периода', 'id': 'paymnt_condition_grace_end_dt'}
+            ],
+            data=[{
+                'account_uid': card_data['account_uid'],
+                'arrear_principal_outstanding': f"{card_data['arrear_principal_outstanding']:,.0f} ₽",
+                'arrear_int_outstanding': f"{card_data['arrear_int_outstanding']:,.0f} ₽",
+                'arrear_other_amt_outstanding': f"{card_data['arrear_other_amt_outstanding']:,.0f} ₽",
+                'overall_val_credit_total_amt': f"{card_data['overall_val_credit_total_amt']}%",
+                'paymnt_condition_grace_start_dt': card_data['paymnt_condition_grace_start_dt'],
+                'paymnt_condition_grace_end_dt': card_data['paymnt_condition_grace_end_dt']
+            }],
+            style_table={'overflowX': 'auto'},
+            style_cell={
+                'minWidth': '100px',
+                'fontSize': '12px',
+                'padding': '5px'
+            }
+        )
+
+        # Формирование сообщения о льготном периоде
+        grace_end_dt = card_data.get('paymnt_condition_grace_end_dt')
+
+        if pd.isna(grace_end_dt) or grace_end_dt in [None, '']:
+            message = "льготный период по этой карте не предусмотрен"
+        else:
+            grace_period_msg = f"чтобы не платить проценты до {grace_end_dt}"
+
+            message = (
+                    f"Внесите сумму {card_data['arrear_amt_outstanding']:,.0f} ₽ " +
+                    grace_period_msg
+        )
+
+        return table, message
+
+    except Exception as e:
+            print(f"Ошибка: {str(e)}")
+            return html.Div("Ошибка при загрузке данных карты",
+                           style={'color': 'red'}), dash.no_update
 @callback(
     [Output('repay-confirm', 'displayed'),
      Output('redirect-url', 'href')],
@@ -830,6 +1050,8 @@ def update_loan_details(selected_loan):
     if filtered.empty:
         return {'display': 'none'}, []
     return {'display': 'block'}, filtered.to_dict('records')
+
+
 
 if __name__ == '__main__':
     app.run_server(debug=True)
