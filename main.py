@@ -544,13 +544,31 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title='Распределение по видам займов',
         hole=0.6  # Добавьте этот параметр для создания кольца
     ).update_layout(
-        font_family='Verdana',
-        font_color=corporate_colors['text'],
-        plot_bgcolor=corporate_colors['card'],
+        # font_family='Verdana',
+        # font_color=corporate_colors['text'],
+        # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
+        # title_font_size=18,
+        # title_font_color='#5D3FBA'
+        font_family='Verdana',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5,
+            font=dict(size=12),  # Уменьшаем размер шрифта
+            # itemgap = 0.5,  # Расстояние между элементами
+            title = None
+        ),
+        margin=dict(t=120, b=80, l=50, r=50),  # Настраиваем отступы
         title_font_size=18,
-        title_font_color='#5D3FBA'
+        title_x=0.5,
+        title_y=0.95, # Центрируем заголовок
+        height=450,
+        autosize=False
     )
+
 
     loan_purpose_fig = px.pie(
         filtered_df,
@@ -590,31 +608,87 @@ def update_additional_elements(filtered_data, n_clicks, income):
     ]].to_dict('records')
 
     # График с доходом
+    # income_fig = go.Figure()
+    # if n_clicks > 0 and income is not None and not filtered_df.empty and 'fund_date' in filtered_df.columns:
+    #     monthly_debt = filtered_df.resample('M', on='fund_date')['account_amt_credit_limit'].mean()
+    #     income_fig.add_trace(go.Scatter(
+    #         x=monthly_debt.index,
+    #         y=monthly_debt.values,
+    #         name='Средняя задолженность'
+    #     ))
+    #     income_fig.add_hline(
+    #         y=income,
+    #         line_dash="dash",
+    #         line_color="red",
+    #         annotation_text=f"Доход: {income}"
+    #     )
+    #     income_fig.update_layout(
+    #         title="Задолженность vs Доход",
+    #         plot_bgcolor=corporate_colors['card'],
+    #         paper_bgcolor=corporate_colors['background'],
+    #         font_color=corporate_colors['text']
+    #     )
+    # else:
+    #     income_fig = empty_fig.update_layout(title="Задолженность vs Доход")
+    #
+    # return loan_kind_fig, loan_purpose_fig, rate_pie_fig, table_data, income_fig
+
+
+# В функции update_additional_elements замените блок с income_fig:
+
+    # График с доходом
     income_fig = go.Figure()
-    if n_clicks > 0 and income is not None and not filtered_df.empty and 'fund_date' in filtered_df.columns:
-        monthly_debt = filtered_df.resample('M', on='fund_date')['account_amt_credit_limit'].mean()
-        income_fig.add_trace(go.Scatter(
-            x=monthly_debt.index,
-            y=monthly_debt.values,
-            name='Средняя задолженность'
-        ))
-        income_fig.add_hline(
-            y=income,
-            line_dash="dash",
-            line_color="red",
-            annotation_text=f"Доход: {income}"
+
+    if n_clicks > 0 and income is not None and not filtered_df.empty:
+        # Преобразуем колонку с датами
+        filtered_df['paymnt_condition_principal_terms_amt_dt'] = pd.to_datetime(
+            filtered_df['paymnt_condition_principal_terms_amt_dt'],
+            errors='coerce'
         )
-        income_fig.update_layout(
-            title="Задолженность vs Доход",
-            plot_bgcolor=corporate_colors['card'],
-            paper_bgcolor=corporate_colors['background'],
-            font_color=corporate_colors['text']
-        )
+
+        # Удаляем строки с некорректными датами
+        filtered_df = filtered_df.dropna(subset=['paymnt_condition_principal_terms_amt_dt'])
+        # Собираем платежи по месяцам
+        payments = filtered_df.groupby(
+            pd.Grouper(key='paymnt_condition_principal_terms_amt_dt', freq='M')
+        ).agg(
+            total_payment=('paymnt_condition_principal_terms_amt', 'sum'),
+            total_interest=('paymnt_condition_interest_terms_amt', 'sum')
+        ).reset_index()
+
+        # Суммируем основной долг и проценты
+        payments['total'] = payments['total_payment'] + payments['total_interest']
+
+        if not payments.empty:
+            income_fig.add_trace(go.Bar(
+                x=payments['paymnt_condition_principal_terms_amt_dt'],
+                y=payments['total'],
+                name='Суммарный платеж',
+                marker_color='#7E5BEF'
+            ))
+
+            income_fig.add_hline(
+                y=income,
+                line_dash="dash",
+                line_color="red",
+                annotation_text=f"Доход: {income:.2f} ₽"
+            )
+
+            income_fig.update_layout(
+                title="Сравнение дохода с платежами",
+                xaxis_title="Месяц",
+                yaxis_title="Сумма, ₽",
+                plot_bgcolor=corporate_colors['card'],
+                paper_bgcolor=corporate_colors['background'],
+                font_color=corporate_colors['text'],
+                barmode='group'
+            )
+        else:
+            income_fig = empty_fig.update_layout(title="Нет данных о платежах")
     else:
-        income_fig = empty_fig.update_layout(title="Задолженность vs Доход")
+        income_fig = empty_fig.update_layout(title="Введите доход для анализа")
 
     return loan_kind_fig, loan_purpose_fig, rate_pie_fig, table_data, income_fig
-
 # В колбэки добавьте:
 @callback(
     Output('payment-schedule', 'figure'),
