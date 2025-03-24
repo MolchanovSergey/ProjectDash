@@ -1,10 +1,10 @@
 import json
-
+import calendar
 import dash
 from dash import dcc, html, Input, Output, callback, State, ALL
 import plotly.express as px
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 from dash import dash_table
 import plotly.graph_objects as go
 from gigachat import GigaChat
@@ -188,11 +188,53 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
     html.Div([
         html.H3("Кредитные карты", style={'margin': '20px 0', 'color': corporate_colors['text']}),
         html.Div(id='credit-cards-buttons'),
-        html.Div(id='credit-card-details')
+        html.Div(id='credit-card-details'),
+        dcc.Markdown(id='llm-output1', style={
+                        'background': corporate_colors['card'],
+                        'padding': '15px',
+                        'borderRadius': '5px',
+                        'marginTop': '10px',
+                        # 'whiteSpace': 'pre-wrap'  # Для форматирования текста
+                        'border': '1px solid #EEE'
+                    }),
     ], style={'padding': '20px'}),
+
+
 
     # Скрытый элемент для хранения данных о выборе
     dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='records')),
+
+
+    # В блоке layout добавьте новый компонент перед графиком платежей:
+    html.Div([
+        html.H3("Календарь платежей", style={'margin': '20px 0', 'color': corporate_colors['text'], 'fontSize': '24px'}),
+        html.Div([
+            html.Button('◄', id='prev-month', n_clicks=0,
+                       style={'marginRight': '10px',
+                       'border': 'none',
+                       'background': 'none',
+                       'cursor': 'pointer',
+                       'fontSize': '36px',
+                       'fontFamily': 'Verdana'}),
+            html.Span(id='current-month-year',
+                      style={'fontWeight': 'bold',
+                      'marginRight': '10px',
+                      'fontSize': '32px',
+                      'fontFamily': 'Verdana'}),
+            html.Button('►', id='next-month', n_clicks=0,
+                       style={'border': 'none',
+                       'background': 'none',
+                       'cursor': 'pointer',
+                       'fontSize': '36px',
+                       'fontFamily': 'Verdana'}),
+        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '15px'}),
+        html.Div(id='payment-calendar',
+                 style={'backgroundColor': corporate_colors['card'],
+                       'padding': '15px',
+                       'borderRadius': '8px',
+                       'height': '800px'
+                 })
+    ], style={'padding': '20px'}),
 
     # В макет добавьте:
     html.Div([
@@ -431,11 +473,31 @@ def unified_callback(selected_date, n_clicks, question, filtered_data):
 
         # Формирование данных для LLM
         try:
+            # Добавляем информацию о кредитных картах
+            credit_cards = filtered_df[
+                (filtered_df['trade_loan_kind_code'] == 'Кредитная линия с лимитом задолженности') &
+                (filtered_df['arrear_sign'] == 1)
+                ]
+
+            credit_cards_info = []
+            for _, row in credit_cards.iterrows():
+                grace_end_dt = row.get('paymnt_condition_grace_end_dt')
+                grace_period = "льготный период не предусмотрен" if pd.isna(
+                    grace_end_dt) else f"льготный период до {grace_end_dt}"
+
+                credit_cards_info.append(
+                    f"Карта {row['account_uid']}: "
+                    f"Задолженность {row['arrear_principal_outstanding']:,.0f} ₽, "
+                    f"Минимальный платеж {row.get('paymnt_condition_min_paymt', 0):,.0f} ₽, "
+                    f"{grace_period}"
+                )
             kpi_data = {
                 "total_principal": total_principal,
                 "total_interest": total_interest,
                 "total_other": total_other,
-                "avg_monthly": avg_monthly
+                "avg_monthly": avg_monthly,
+                "credit_cards_info": "\n".join(
+                    credit_cards_info) if credit_cards_info else "Нет активных кредитных карт"
             }
             response = send_prompt_to_llm(kpi_data, giga_token)
             recommendation = response.choices[0].message.content
@@ -827,11 +889,16 @@ def send_prompt_to_llm(kpi_data: dict, giga_token):
     - Начисленные проценты: {kpi_data['total_interest']}
     - Иные требования: {kpi_data['total_other']:,.0f}
     - Средний платёж: {kpi_data['avg_monthly']:,.0f}
+    
+    Информация о кредитных картах:
+    {kpi_data['credit_cards_info']}
 
     Задача: 1. Дать развернутый анализ по каждому параметру. Дать конкретные рекомендации по каждому параметру для заемщика по улучшению. 
             2. Ответ оформить как маркированный список.
             3. Указать среднюю процентную ставку потребительского кредитованя в банках : (на текущую дату {datetime.now()} составляет 28% - 36%)
             Расчет не выводить!"
+            4. Дать рекомендации по управлению кредитными картами
+            5. Предложить стратегию погашения с учетом льготных периодов
          
     """
     prompt += f"\n\nДополнительный контекст маппинга:\n{mapping_df.iloc[:, 4].to_string()}"
@@ -938,7 +1005,7 @@ def update_credit_cards_buttons(filtered_data):
 # Колбэк для отображения деталей
 @callback(
     [Output('credit-card-details', 'children'),
-     Output('llm-output', 'children', allow_duplicate=True)],
+     Output('llm-output1', 'children', allow_duplicate=True)],
     [Input({'type': 'credit-card-button', 'index': ALL}, 'n_clicks')],
     [State('crossfilter-selection', 'data')],
     prevent_initial_call=True
@@ -1051,6 +1118,256 @@ def update_loan_details(selected_loan):
         return {'display': 'none'}, []
     return {'display': 'block'}, filtered.to_dict('records')
 
+# Добавьте новые колбэки для календаря:
+# @app.callback(
+#     [Output('payment-calendar', 'children'),
+#      Output('current-month-year', 'children')],
+#     [Input('prev-month', 'n_clicks'),
+#      Input('next-month', 'n_clicks'),
+#      Input('crossfilter-selection', 'data')],
+#     [State('current-month-year', 'children')]
+# )
+#
+# def update_calendar(prev_clicks, next_clicks, filtered_data, current_display):
+#     ctx = dash.callback_context
+#     if not ctx.triggered:
+#         # Инициализация - текущий месяц и год
+#         today = date.today()
+#         month, year = today.month, today.year
+#     else:
+#         # Определяем текущий месяц из отображения или из триггера
+#         if current_display:
+#             month_name, year_str = current_display.split()
+#             month = list(calendar.month_name).index(month_name)
+#             year = int(year_str)
+#         else:
+#             today = date.today()
+#             month, year = today.month, today.year
+#
+#         # Обрабатываем нажатия кнопок
+#         if ctx.triggered[0]['prop_id'] == 'prev-month.n_clicks':
+#             month -= 1
+#             if month < 1:
+#                 month = 12
+#                 year -= 1
+#         elif ctx.triggered[0]['prop_id'] == 'next-month.n_clicks':
+#             month += 1
+#             if month > 12:
+#                 month = 1
+#                 year += 1
+#
+#     # Получаем данные о платежах
+#     filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
+#
+#     # Создаем календарь
+#     cal = calendar.HTMLCalendar()
+#     html_cal = cal.formatmonth(year, month)
+#
+#     # Если есть данные, добавляем информацию о платежах
+#     if not filtered_df.empty:
+#         # Преобразуем даты платежей
+#         filtered_df['paymnt_condition_principal_terms_amt_dt'] = pd.to_datetime(
+#             filtered_df['paymnt_condition_principal_terms_amt_dt'], errors='coerce')
+#         filtered_df['paymnt_condition_interest_terms_amt_dt'] = pd.to_datetime(
+#             filtered_df['paymnt_condition_interest_terms_amt_dt'], errors='coerce')
+#
+#         # Создаем словарь с суммами платежей по дням
+#         payment_dict = {}
+#
+#         # Обрабатываем платежи по основному долгу
+#         principal_payments = filtered_df.dropna(subset=['paymnt_condition_principal_terms_amt_dt'])
+#
+#         for _, row in principal_payments.iterrows():
+#             payment_date = row['paymnt_condition_principal_terms_amt_dt']
+#             if payment_date.year == year and payment_date.month == month:
+#                 day = payment_date.day
+#                 amount = row['paymnt_condition_principal_terms_amt']
+#                 if day in payment_dict:
+#                     payment_dict[day] += amount
+#                 else:
+#                     payment_dict[day] = amount
+#
+#         # Обрабатываем платежи по процентам
+#         interest_payments = filtered_df.dropna(subset=['paymnt_condition_interest_terms_amt_dt'])
+#         for _, row in interest_payments.iterrows():
+#             payment_date = row['paymnt_condition_interest_terms_amt_dt']
+#             if payment_date.year == year and payment_date.month == month:
+#                 day = payment_date.day
+#                 amount = row['paymnt_condition_interest_terms_amt']
+#                 if day in payment_dict:
+#                     payment_dict[day] += amount
+#                 else:
+#                     payment_dict[day] = amount
+
+    #     # Модифицируем HTML календаря для добавления платежей
+    #     from bs4 import BeautifulSoup
+    #     soup = BeautifulSoup(html_cal, 'html.parser')
+    #
+    #     # Находим все ячейки с днями
+    #     for day_cell in soup.find_all('td'):
+    #         if day_cell.text.isdigit():
+    #             day = int(day_cell.text)
+    #             if day in payment_dict:
+    #                 payment = payment_dict[day]
+    #                 payment_div = soup.new_tag('div', style='color: #4B0082; font-size: 10px; margin-top: 5px;')
+    #                 payment_div.string = f"{payment:,.0f} ₽"
+    #                 day_cell.append(payment_div)
+    #
+    #     html_cal = str(soup)
+    #
+    # # Отображаем название месяца и год
+    # month_year_display = f"{calendar.month_name[month]} {year}"
+    #
+    # return html.Iframe(
+    #     srcDoc=html_cal,
+    #     style={'width': '100%', 'height': '400px', 'border': 'none'}
+    # ), month_year_display
+#
+#
+
+
+@app.callback(
+    [Output('payment-calendar', 'children'),
+     Output('current-month-year', 'children')],
+    [Input('prev-month', 'n_clicks'),
+     Input('next-month', 'n_clicks'),
+     Input('crossfilter-selection', 'data')],
+    [State('current-month-year', 'children'),
+     State('report-date-filter', 'date')]
+)
+def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, report_date):
+    ctx = dash.callback_context
+
+    # Определяем начальный месяц и год
+    if not ctx.triggered:
+        if report_date:
+            report_date = pd.to_datetime(report_date)
+            month, year = report_date.month, report_date.year
+        else:
+            today = date.today()
+            month, year = today.month, today.year
+    else:
+        if current_display:
+            month_name, year_str = current_display.split()
+            month = list(calendar.month_name).index(month_name)
+            year = int(year_str)
+        else:
+            if report_date:
+                report_date = pd.to_datetime(report_date)
+                month, year = report_date.month, report_date.year
+            else:
+                today = date.today()
+                month, year = today.month, today.year
+
+        if ctx.triggered[0]['prop_id'] == 'prev-month.n_clicks':
+            month -= 1
+            if month < 1:
+                month = 12
+                year -= 1
+        elif ctx.triggered[0]['prop_id'] == 'next-month.n_clicks':
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+    filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
+
+    # Создаем словарь с суммами платежей по дням
+    payment_dict = {}
+    if not filtered_df.empty:
+        if 'paymnt_condition_principal_terms_amt_dt' in filtered_df.columns:
+            filtered_df['paymnt_condition_principal_terms_amt_dt'] = pd.to_datetime(
+                filtered_df['paymnt_condition_principal_terms_amt_dt'], errors='coerce')
+            principal_payments = filtered_df.dropna(subset=['paymnt_condition_principal_terms_amt_dt'])
+            for _, row in principal_payments.iterrows():
+                payment_date = row['paymnt_condition_principal_terms_amt_dt']
+                if pd.notna(payment_date) and payment_date.year == year and payment_date.month == month:
+                    day = payment_date.day
+                    amount = row.get('paymnt_condition_principal_terms_amt', 0)
+                    if not pd.isna(amount):
+                        payment_dict[day] = payment_dict.get(day, 0) + amount
+
+        if 'paymnt_condition_interest_terms_amt_dt' in filtered_df.columns:
+            filtered_df['paymnt_condition_interest_terms_amt_dt'] = pd.to_datetime(
+                filtered_df['paymnt_condition_interest_terms_amt_dt'], errors='coerce')
+            interest_payments = filtered_df.dropna(subset=['paymnt_condition_interest_terms_amt_dt'])
+            for _, row in interest_payments.iterrows():
+                payment_date = row['paymnt_condition_interest_terms_amt_dt']
+                if pd.notna(payment_date) and payment_date.year == year and payment_date.month == month:
+                    day = payment_date.day
+                    amount = row.get('paymnt_condition_interest_terms_amt', 0)
+                    if not pd.isna(amount):
+                        payment_dict[day] = payment_dict.get(day, 0) + amount
+
+    # Создаем календарь вручную вместо использования HTMLCalendar
+    cal = calendar.monthcalendar(year, month)
+    month_name = calendar.month_name[month]
+    month_year_display = f"{month_name} {year}"
+
+    # Создаем HTML для календаря
+    html_cal = f"""
+    <table style="
+        font-family: Verdana, sans-serif;
+        font-size: 20px;
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 5px;
+    ">
+        <thead>
+            <tr>
+                <th colspan="7" style="
+                    padding: 15px;
+                    text-align: center;
+                    background-color: #F5F3FF;
+                    color: #4B0082;
+                    font-size: 24px;
+                    border-radius: 8px;
+                ">{month_year_display}</th>
+            </tr>
+            <tr>
+                {"".join(f'<th style="padding: 15px; text-align: center; background-color: #F5F3FF; color: #4B0082; font-size: 24px; border-radius: 8px;">{day}</th>'
+                         for day in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"])}
+            </tr>
+        </thead>
+        <tbody>
+    """
+
+    for week in cal:
+        html_cal += "<tr>"
+        for day in week:
+            if day == 0:
+                html_cal += '<td style="padding: 15px; text-align: center; height: 80px; vertical-align: top; border: 1px solid #E5DEFF; border-radius: 8px; background-color: #FFFFFF;"></td>'
+            else:
+                payment = payment_dict.get(day, 0)
+                payment_html = f'<div style="color: #4B0082; font-size: 16px; margin-top: 10px; font-weight: bold;">{payment:,.0f} ₽</div>' if payment else ''
+                html_cal += f'''
+                <td style="
+                    padding: 15px;
+                    text-align: center;
+                    height: 80px;
+                    vertical-align: top;
+                    border: 1px solid #E5DEFF;
+                    border-radius: 8px;
+                    background-color: #FFFFFF;
+                    font-size: 20px;
+                ">
+                    {day}
+                    {payment_html}
+                </td>
+                '''
+        html_cal += "</tr>"
+    html_cal += "</tbody></table>"
+
+    return html.Iframe(
+        srcDoc=html_cal,
+        style={
+            'width': '100%',
+            'height': '800px',
+            'border': 'none',
+            'transform': 'scale(1)',
+            'transform-origin': '0 0'
+        }
+    ), month_year_display
 
 
 if __name__ == '__main__':
