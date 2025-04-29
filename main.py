@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from gigachat import GigaChat
 from dotenv import load_dotenv
 import os
+import io
 
 load_dotenv()
 
@@ -64,6 +65,7 @@ df['account_uid'] = df['account_uid'].astype(str)
 
 # Извлечение маппинга из строки 10 (ключи - числа, значения - текстовые описания)
 loan_kind_mapping_raw = mapping_df.iloc[10, 4]
+print(f"Маппинг из строки 10: {loan_kind_mapping_raw}")  # Отладочный вывод
 loan_kind_mapping = {}
 
 # Разбиваем строку по строкам и заполняем словарь
@@ -183,7 +185,7 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
     ], style={'padding': '20px'}),
 
     # Скрытый элемент для хранения данных о выборе
-    dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='records')),
+    dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='split')),
 
     # В блоке layout добавьте новый компонент перед графиком платежей:
     html.Div([
@@ -424,7 +426,8 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
     if triggered_id in ['report-date-filter', None]:
         # Фильтрация по дате
         if selected_date:
-            filtered_df = filtered_df[filtered_df['reporting_dt'] == pd.to_datetime(selected_date)]
+            selected_date_dt = pd.to_datetime(selected_date)
+            filtered_df = filtered_df[filtered_df['reporting_dt'].dt.date == selected_date_dt.date()]
 
         # Расчет KPI
         total_principal = filtered_df['arrear_principal_outstanding'].sum()
@@ -437,19 +440,6 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
         max_rate = filtered_df['overall_val_credit_total_amt'].max()
         total_past_due_principal = filtered_df['past_due_amt_past_due'].sum()
         total_past_due_interest = filtered_df['past_due_int_amt_past_due'].sum()
-
-        # Добавить здесь вывод KPI данных
-        print("\n" + "=" * 40)
-        print("АКТУАЛЬНЫЕ KPI ДАННЫЕ:")
-        print(f"- Основной долг: {total_principal:,.0f} ₽")
-        print(f"- Проценты: {total_interest:,.0f} ₽")
-        print(f"- Средний платеж: {avg_monthly:,.0f} ₽")
-        print(f"- Средняя ставка: {avg_rate:.1f}%")
-        print(f"- Минимальная ставка: {min_rate:.1f}%")
-        print(f"- Максимальная ставка: {max_rate:.1f}%")
-        print(f"- Просрочка (осн.): {total_past_due_principal:,.0f} ₽")
-        print(f"- Просрочка (%): {total_past_due_interest:,.0f} ₽")
-        print("=" * 40 + "\n")
 
         kpi_cards = [
             create_kpi_card("Основной долг", total_principal, "#1f77b4"),
@@ -472,7 +462,7 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
     elif triggered_id == 'submit-question' and question:
         try:
             # Фильтрация данных
-            filtered_df = pd.read_json(filtered_data, orient='split')
+            filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
             # Формируем KPI data
             kpi_data = {
@@ -516,12 +506,30 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
 )
 def update_additional_elements(filtered_data, n_clicks, income):
     try:
-        filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
-        # Добавляем преобразование типа для 'fund_date'
-        if not filtered_df.empty and 'fund_date' in filtered_df.columns:
-            filtered_df['fund_date'] = pd.to_datetime(filtered_df['fund_date'])
-    except:
-        filtered_df = pd.DataFrame()
+        if not filtered_data:
+            # Возвращаем заглушки для всех выходов
+            empty_fig = px.scatter(title="Нет данных").update_layout(
+                plot_bgcolor=corporate_colors['card'],
+                paper_bgcolor=corporate_colors['background'],
+                font_color=corporate_colors['text']
+            )
+            return empty_fig, empty_fig, empty_fig, [], empty_fig
+        # Чтение данных
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
+        print(f"[DEBUG] Данные получены. Колонки: {filtered_df.columns.tolist()}")
+
+        # Преобразование даты (если нужно)
+        if 'fund_date' in filtered_df.columns:
+            filtered_df['fund_date'] = pd.to_datetime(filtered_df['fund_date'], errors='coerce')
+
+    except Exception as e:
+        print(f"[ERROR] Ошибка в update_additional_elements: {str(e)}")
+        empty_fig = px.scatter(title="Ошибка данных").update_layout(
+            plot_bgcolor=corporate_colors['card'],
+            paper_bgcolor=corporate_colors['background'],
+            font_color=corporate_colors['text']
+        )
+        return empty_fig, empty_fig, empty_fig, [], empty_fig
 
     # Заглушки для пустых данных
     empty_fig = px.scatter(title="Нет данных").update_layout(
@@ -530,7 +538,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         font_color=corporate_colors['text']
     )
     if filtered_df.empty:
-        return empty_fig, empty_fig, [], empty_fig
+        return empty_fig, empty_fig, empty_fig, [], empty_fig
 
     # Круговые диаграммы
     loan_kind_fig = px.pie(
@@ -731,7 +739,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
     Input('crossfilter-selection', 'data')
 )
 def update_payment_chart(filtered_data):
-    filtered_df = pd.read_json(filtered_data, orient='split')
+    filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
     fig = go.Figure()
 
@@ -848,9 +856,12 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
     if user_income:
         prompt += f"\nРасчеты с учетом дохода {user_income} ₽:"
         prompt += f"\n- Макс. рекомендуемый платеж: {user_income * 0.4:.0f} ₽"
-
-    with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
-        return giga.chat(prompt)
+    try:
+        with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+            return giga.chat(prompt)
+    except Exception as e:
+        print(f"Ошибка GigaChat: {str(e)}")
+        return "Не удалось получить рекомендации. Пожалуйста, попробуйте позже."
 
 
 # Колбэк для создания кнопок
@@ -861,23 +872,18 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
 def update_credit_cards_buttons(filtered_data):
     try:
         # Чтение и преобразование данных
-        filtered_df = pd.read_json(filtered_data, orient='split')
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
-        # Отладочный вывод структуры данных
-        print("\nСтруктура данных перед обработкой:")
-        print(filtered_df[['trade_loan_kind_code', 'arrear_sign']].dtypes)
 
-        # # Преобразование типов с обработкой ошибок
-        # filtered_df['trade_loan_kind_code'] = pd.to_numeric(
-        #     filtered_df['trade_loan_kind_code'], errors='coerce'
-        # )
+        # Преобразование типов с обработкой ошибок
+
         filtered_df['arrear_sign'] = pd.to_numeric(
             filtered_df['arrear_sign'], errors='coerce'
         )
 
         # Фильтрация данных
         credit_cards = filtered_df[
-            (filtered_df['trade_loan_kind_code'] == 'Кредитная линия с лимитом задолженности') &
+            (filtered_df['trade_loan_kind_code'].astype(str) == 'Кредитная линия с лимитом задолженности') &
             (filtered_df['arrear_sign'] == 1)
             ]
 
@@ -963,7 +969,7 @@ def show_credit_card_details(clicks, filtered_data):
         return dash.no_update, dash.no_update
 
     try:
-        filtered_df = pd.read_json(filtered_data, orient='split')
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
         account_uid = str(json.loads(button_id)['index'])
 
@@ -1079,6 +1085,7 @@ def update_loan_details(selected_loan):
      State('report-date-filter', 'date')]
 )
 def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, report_date):
+    # print(f"Данные для календаря: {filtered_df.shape if not filtered_df.empty else 'пусто'}")
     ctx = dash.callback_context
 
     # Определяем начальный месяц и год
@@ -1113,7 +1120,22 @@ def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, re
                 month = 1
                 year += 1
 
-    filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
+    # filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split') if filtered_data else pd.DataFrame()
+        # Исправленный блок чтения данных
+    try:
+        if filtered_data:
+            filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
+        else:
+            filtered_df = pd.DataFrame()
+    except Exception as e:
+        print(f"Ошибка чтения данных: {str(e)}")
+        filtered_df = pd.DataFrame()
+
+    # Исправленный принт
+    if not filtered_df.empty:
+        print(f"Данные для календаря: {filtered_df.shape}")
+    else:
+        print("Данные для календаря: пусто")
 
     # Создаем словарь с суммами платежей по дням
     payment_dict = {}
