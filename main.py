@@ -515,14 +515,14 @@ def update_additional_elements(filtered_data, n_clicks, income):
             return empty_fig, empty_fig, empty_fig, [], empty_fig
         # Чтение данных
         filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
-        print(f"[DEBUG] Данные получены. Колонки: {filtered_df.columns.tolist()}")
+        # print(f"[DEBUG] Данные получены. Колонки: {filtered_df.columns.tolist()}")
 
         # Преобразование даты (если нужно)
         if 'fund_date' in filtered_df.columns:
             filtered_df['fund_date'] = pd.to_datetime(filtered_df['fund_date'], errors='coerce')
 
     except Exception as e:
-        print(f"[ERROR] Ошибка в update_additional_elements: {str(e)}")
+        # print(f"[ERROR] Ошибка в update_additional_elements: {str(e)}")
         empty_fig = px.scatter(title="Ошибка данных").update_layout(
             plot_bgcolor=corporate_colors['card'],
             paper_bgcolor=corporate_colors['background'],
