@@ -65,7 +65,6 @@ df['account_uid'] = df['account_uid'].astype(str)
 
 # Извлечение маппинга из строки 10 (ключи - числа, значения - текстовые описания)
 loan_kind_mapping_raw = mapping_df.iloc[10, 4]
-print(f"Маппинг из строки 10: {loan_kind_mapping_raw}")  # Отладочный вывод
 loan_kind_mapping = {}
 
 # Разбиваем строку по строкам и заполняем словарь
