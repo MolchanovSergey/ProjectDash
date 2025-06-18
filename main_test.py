@@ -1143,7 +1143,7 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
     - Учитывать:
       - Виды кредитов (например, микрозаймы, ипотека, потребительские кредиты) для приоритизации действий.
       - Просрочки для минимизации ущерба кредитной истории.
-      - Ставки кредитов в сравнении с ключевой ставкой ЦБ (21%) для рекомендаций по рефинансированию.
+      - Ставки кредитов в сравнении с ключевой ставкой ЦБ (20%) для рекомендаций по рефинансированию.
       - Доход и платежную нагрузку (выше 40% от дохода — высокая нагрузка).
       - Вероятность невозврата ({default_prob:.1f}%) для оценки рисков.
     - Формат ответа: маркированный список.
@@ -1192,88 +1192,12 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
         prompt += f"\nРасчеты с учетом дохода {user_income} ₽:"
         prompt += f"\n- Макс. рекомендуемый платеж: {user_income * 0.4:.0f} ₽"
     try:
-        with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+        with GigaChat(credentials=credentials, verify_ssl_certs=False, scope="GIGACHAT_API_PERS", model="GigaChat-Max") as giga:
             return giga.chat(prompt)
     except Exception as e:
         print(f"Ошибка GigaChat: {str(e)}")
         return "Не удалось получить рекомендации. Пожалуйста, попробуйте позже."
 
-
-# def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_income=None, default_prob=None):
-#     credentials = giga_token
-#
-# Формирование строки с данными о просрочках
-# overdue_info = (
-#     f"- Просрочки до 6 дней: {kpi_data['overdue_categories']['less_6_days']} случаев\n"
-#     f"- Просрочки 6–30 дней: {kpi_data['overdue_categories']['6_30_days']} случаев\n"
-#     f"- Просрочки 31–60 дней: {kpi_data['overdue_categories']['31_60_days']} случаев\n"
-#     f"- Просрочки 61–90 дней: {kpi_data['overdue_categories']['61_90_days']} случаев\n"
-#     f"- Просрочки более 90 дней: {kpi_data['overdue_categories']['90_plus_days']} случаев\n"
-#     f"- Максимальная просрочка: {kpi_data['max_overdue']:,.0f} ₽\n"
-#     f"- Последняя просрочка: {kpi_data['last_overdue_date']}"
-# )
-#
-#     # Формирование строки с типами кредитов
-#     loan_types_info = "\n".join(
-#         f"- {loan_type}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
-#         for loan_type, data in kpi_data['loan_types'].items()
-#     )
-#     loan_purposes_info = "\n".join(
-#         f"- {purpose}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
-#         for purpose, data in kpi_data['loan_purposes'].items()
-#     )
-#
-#     prompt = f"""
-#     ### Кредитный профиль клиента:
-#     - Количество активных кредитов: {kpi_data['num_active_loans']}
-#     - Кредиты с просрочками: {kpi_data['num_overdue_loans']} из {kpi_data['num_active_loans']}
-#     - Общий основной долг: {kpi_data['total_principal']:,.0f} ₽
-#     - Общие проценты: {kpi_data['total_interest']:,.0f} ₽
-#     - Средний ежемесячный платеж: {kpi_data['avg_monthly']:,.0f} ₽
-#     - Ежемесячная платежная нагрузка (основной долг + проценты): {kpi_data['monthly_payment_load']:,.0f} ₽
-#     - Средняя процентная ставка: {kpi_data['avg_rate']:.1f}%
-#     - Минимальная ставка: {kpi_data['min_rate']:.1f}%
-#     - Максимальная ставка: {kpi_data['max_rate']:.1f}%
-#     - Просроченный основной долг: {kpi_data['total_past_due_principal']:,.0f} ₽
-#     - Просроченные проценты: {kpi_data['total_past_due_interest']:,.0f} ₽
-#     - Вероятность дефолта: {default_prob:.1f}%
-#     - Новые кредиты за последний год: {kpi_data['new_loans_last_year']}
-#     - История просрочек:\n{overdue_info}
-#     - Виды кредитов:\n{loan_types_info}
-#     - Цели кредитов:\n{loan_purposes_info}
-#     - Доход клиента: {user_income if user_income else 'не указан'} ₽
-#
-#     ### Пользовательский вопрос:
-#     {user_question if user_question else 'Дайте рекомендации по управлению долгами'}
-#
-#     ### Задача:
-#     - Ответить на вопрос пользователя или дать рекомендации по управлению долгами.
-#     - Учитывать данные кредитной истории, включая виды кредитов, просрочки и ставки.
-#     - Объяснять рекомендации простым языком, избегая сложных финансовых терминов.
-#     - Предлагать неочевидные шаги, например:
-#       - Рефинансирование кредитов с высокими ставками (выше 16% — ключевой ставки ЦБ).
-#       - Консолидацию мелких кредитов для снижения платежной нагрузки.
-#       - Приоритизацию погашения кредитов с просрочками более 90 дней.
-#       - Оптимизацию бюджета с учетом дохода.
-#     - Сравнивать ставки клиента с ключевой ставкой ЦБ (16%) для рекомендаций по рефинансированию.
-#     - Формат ответа: маркированный список.
-#
-#     ### Требования к ответу:
-#     - Персонализировать рекомендации, используя данные о просрочках, видах кредитов и доходе.
-#     - Объяснять, как рекомендации помогут клиенту (например, снизят платежи или улучшат кредитную историю).
-#     - Избегать шаблонных советов вроде "платите вовремя".
-#     - Если доход указан, рассчитать, какую часть дохода составляют платежи, и предложить действия, если нагрузка выше 40%.
-#
-#     ### Пример расчета:
-#     {f"Максимальный рекомендуемый платеж: {user_income * 0.4:.0f} ₽ (40% от дохода)" if user_income else ""}
-#     """
-#
-#     try:
-#         with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
-#             return giga.chat(prompt)
-#     except Exception as e:
-#         print(f"Ошибка GigaChat: {str(e)}")
-#         return "Не удалось получить рекомендации. Пожалуйста, попробуйте позже."
 
 # Колбэк для создания кнопок
 @callback(
