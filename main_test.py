@@ -10,17 +10,19 @@ import plotly.graph_objects as go
 from gigachat import GigaChat
 from dotenv import load_dotenv
 import os
+import io
 
 load_dotenv()
 
-client_file_path = 'data_for_llm/cl_1/random_client.csv'
-default_prob_file_path = 'data_for_llm/cl_1/real_cb_test_result.csv'
+client_file_path = 'data_for_llm/cl_10/random_client.csv'
+default_prob_file_path = 'data_for_llm/cl_10/real_cb_test_result.csv'
 mapping_file_path = "maping_csv.csv"
 giga_token = os.getenv('TOKEN_GIGA')
 # Чтение файлов
 df = pd.read_csv(client_file_path,
                  parse_dates=["fund_date", "trade_close_dt", "loan_indicator_dt"], encoding="utf-8")
 mapping_df = pd.read_csv(mapping_file_path, delimiter=';')
+
 df['reporting_dt'] = pd.to_datetime(df['reporting_dt'])
 
 default_prob_df = pd.read_csv(default_prob_file_path)
@@ -123,283 +125,421 @@ corporate_colors = {
 app = dash.Dash(__name__)
 server = app.server  # Gunicorn запускает Flask-сервер
 app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
-                             'fontFamily': 'Verdana, sans-serif',  # Шрифтовая схема
-                             'padding': '10px'  # Уменьшаем общий отступ
-                             }, children=[
-    # Компонент для перенаправления
-    dcc.Location(id='redirect-url', refresh=True),
+                             'fontFamily': 'Avenir, sans-serif',
+                             'padding': '10px'}, children=[
+    # Хранилище для состояния согласия
+    dcc.Store(id='consent-given', data=False),
 
-    html.H1("Ваш помощник по кредитам", style={'textAlign': 'center', 'color': corporate_colors['text']}),
-
-    html.Div([
-        html.H3("Выберите дату отчета из бюро кредитных историй",
-                style={'textAlign': 'center', 'color': corporate_colors['text']}),
-        dcc.DatePickerSingle(
-            id='report-date-filter',
-            min_date_allowed=df['reporting_dt'].min(),
-            max_date_allowed=df['reporting_dt'].max(),
-            initial_visible_month=df['reporting_dt'].max(),
-            date=df['reporting_dt'].max()
-        )
-    ], style={'width': '35%', 'padding': '10px'}),
-
-    # KPI метрики
-    # html.Div(id='kpi-cards', style={'display': 'grip', 'justifyContent': 'space-around', 'padding': '20px'}),
-    html.Div(id='kpi-cards', style={
-        'display': 'grid',
-        'grid-template-columns': 'repeat(auto-fit, minmax(180px, 1fr))',
-        'gap': '10p x',
-        'padding': '5px'
-    }),
-
-    # Новые круговые диаграммы
-    html.Div([
-        html.Div([
-            dcc.Graph(id='loan-kind-pie', config={'responsive': True}, style={'height': '40vh'}),
-        ], style={'width': '100%', 'padding': '10px'}),
-
-        html.Div([
-            dcc.Graph(id='loan-purpose-pie', config={'responsive': True}, style={'height': '40vh'}),
-        ], style={'width': '100%', 'padding': '10px'}),
-
-        html.Div([
-            dcc.Graph(id='rate-pie-chart', config={'responsive': True}, style={'height': '40vh'}),
-        ], style={'width': '100%', 'padding': '10px'}),
-
-    ]),
-    # Добавить после блока с круговыми диаграммами
-    html.Div([
-        html.H3("Кредитные карты", style={'margin': '20px 0', 'color': corporate_colors['text']}),
-        html.Div(id='credit-cards-buttons'),
-        html.Div(id='credit-card-details'),
-        dcc.Markdown(id='llm-output1', style={
-            'background': corporate_colors['card'],
-            'padding': '15px',
-            'borderRadius': '5px',
-            'marginTop': '10px',
-            # 'whiteSpace': 'pre-wrap'  # Для форматирования текста
-            'border': '1px solid #EEE'
-        }),
-    ], style={'padding': '20px'}),
-
-    # Скрытый элемент для хранения данных о выборе
-    dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='records')),
-
-    # В блоке layout добавьте новый компонент перед графиком платежей:
-    html.Div([
-        html.H3("Календарь платежей",
-                style={'margin': '20px 0', 'color': corporate_colors['text'], 'fontSize': '24px'}),
-        html.Div([
-            html.Button('◄', id='prev-month', n_clicks=0,
-                        style={'marginRight': '10px',
-                               'border': 'none',
-                               'background': 'none',
-                               'cursor': 'pointer',
-                               'fontSize': '36px',
-                               'fontFamily': 'Verdana'}),
-            html.Span(id='current-month-year',
-                      style={'fontWeight': 'bold',
-                             'marginRight': '10px',
-                             'fontSize': '32px',
-                             'fontFamily': 'Verdana'}),
-            html.Button('►', id='next-month', n_clicks=0,
-                        style={'border': 'none',
-                               'background': 'none',
-                               'cursor': 'pointer',
-                               'fontSize': '36px',
-                               'fontFamily': 'Verdana'}),
-        ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '15px'}),
-        html.Div(id='payment-calendar',
-                 style={'backgroundColor': corporate_colors['card'],
-                        'padding': '15px',
-                        'borderRadius': '8px',
-                        'height': '800px'
-                        })
-    ], style={'padding': '20px'}),
-
-    # В макет добавьте:
-    html.Div([
-        dcc.Graph(id='payment-schedule', style={'width': '100%', 'padding': '10px'})
-    ], style={'padding': '20px'}),
-
-    # Таблица с задолженностью
-    html.Div([
-        html.H3("Список непогашенных кредитов", style={'margin': '20px 0'}),
-        dash_table.DataTable(
-            style_data={
-                'backgroundColor': corporate_colors['card'],
-                'color': corporate_colors['text']
-            },
-            style_cell={
-                'minWidth': '80px',
-                'maxWidth': '120px',
-                'fontSize': '12px',
-                'padding': '5px'
-            },
-            style_header={
-                # 'backgroundColor': '#4B0082',
-                # 'color': 'white',
-                # 'fontWeight': 'bold',
-                'fontSize': '14px'
-            },
-            id='arrear-table',
-            columns=[
-                {'name': 'ID кредита', 'id': 'account_uid'},
-                {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
-                {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
-                {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
-                {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'},
-                {'name': 'Процентная ставка', 'id': 'overall_val_credit_total_amt'}
-            ],
-            style_table={'overflowX': 'auto'},
-            # style_cell={'textAlign': 'left', 'minWidth': '100px'},
-            page_size=10
-
-        )
-    ], style={'padding': '20px'}),
-
-    html.Div([
-        html.H3("Выберите кредит для погашения", style={'margin': '20px 0', 'color': corporate_colors['text']}),
-        dcc.Dropdown(
-            id='loan-selector',
-            options=[
-                {
-                    'label': f"Кредит ID: {row['account_uid']} (Задолженность: {row['arrear_principal_outstanding']} руб.)",
-                    'value': str(row['account_uid'])
-                }
-                for _, row in df.iterrows()
-            ],
-            placeholder="Выберите кредит...",
-            style={'fontSize': '14px', 'marginBottom': '10px'}
-        ),
-        html.Div(id='selected-loan-details', style={'display': 'none'}, children=[
-            dash_table.DataTable(
-                id='loan-details-table',
-                data=[],
-                columns=[
-                    {'name': 'ID кредита', 'id': 'account_uid'},
-                    {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
-                    {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
-                    {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
-                    {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'},
-                    {'name': 'Процентная ставка', 'id': 'overall_val_credit_total_amt'}
-                ],
-                style_table={'overflowX': 'auto'},
-                style_cell={
-                    'minWidth': '80px',
-                    'maxWidth': '120px',
-                    'fontSize': '12px',
-                    'padding': '5px'
-                },
-                style_header={
-                    # 'backgroundColor': '#4B0082',
-                    # 'color': 'white',
-                    # 'fontWeight': 'bold',
-                    'fontSize': '14px'
-                },
-                style_data={
+    # Модальное окно согласия
+    html.Div(
+        id='consent-modal',
+        style={
+            'position': 'fixed',
+            'top': '0',
+            'left': '0',
+            'width': '100%',
+            'height': '100%',
+            'backgroundColor': 'rgba(0,0,0,0.5)',
+            'zIndex': '1000',
+            'display': 'flex',
+            'justifyContent': 'center',
+            'alignItems': 'center'
+        },
+        children=[
+            html.Div(
+                style={
                     'backgroundColor': corporate_colors['card'],
-                    'color': corporate_colors['text']
-                }
-            ),
+                    'padding': '30px',
+                    'borderRadius': '15px',
+                    'maxWidth': '600px',
+                    'textAlign': 'center',
+                    'boxShadow': '0 4px 20px rgba(0,0,0,0.25)'
+                },
+                children=[
+                    html.H2(
+                        "Согласие на обработку данных",
+                        style={'color': corporate_colors['text'], 'marginBottom': '20px'}
+                    ),
+                    dcc.Markdown(
+                        """
+                        **Нажимая кнопку "Далее" вы соглашаетесь:**
+                        - С политикой конфиденциальности
+                        - С условиями обработки персональных данных
+                        - С использованием аналитических cookie
 
-            # В блоке layout после таблицы добавьте:
-            # html.Div([
-            html.H3("Что бы погасить выбранный кредит нажмите на кнопку", style={'margin': '20px 0'}),
-            html.Button('ПОГАСИТЬ',
-                        id='repay-button',
-                        n_clicks=0,
+                        [Ознакомиться с полным текстом правил](https://example.com/privacy-policy)
+                        """,
+                        style={'marginBottom': '30px', 'fontSize': '18px'}
+                    ),
+                    html.Button(
+                        'Далее →',
+                        id='consent-button',
                         style={
+                            'padding': '12px 24px',
                             'fontSize': '18px',
-                            'padding': '6px 12px',
-                            'borderRadius': '5px',
                             'backgroundColor': '#4B0082',
                             'color': 'white',
-                            'fontFamily': 'Verdana',
+                            'borderRadius': '8px',
+                            'border': 'none',
                             'cursor': 'pointer',
-                            'marginTop': '20px'
-                        }),
-            dcc.ConfirmDialog(
-                id='repay-confirm',
-                message='Вы будете переведены в соответствующий раздел мобильного банка для внесения реквизитов. Продолжить оплату?',
-            )
-        ])
-    ], style={'padding': '20px'}),
-    # Блок с доходом
-    html.Div([
-        dcc.Input(
-            id='income-input',
-            type='number',
-            placeholder='Введите среднем.есячный доход',
-            style={'marginRight': '10px',
-                   'marginLeft': '10px',
-                   'width': '15%',
-                   'height': '30px',
-                   'fontSize': '18px',
-                   'fontFamily': 'Verdana',
-                   'marginBottom': '10px'
-                   }
-        ),
-        html.Button('ДОБАВИТЬ',
-                    id='upgrade-button',
-                    n_clicks=0,
-                    style={
-                        'fontSize': '18px',  # Уеличен шрифт кнопки
-                        'padding': '6px 12px',  # Увеличен размер кнопки
-                        'borderRadius': '5px',
-                        'backgroundColor': '#4B0082',
-                        'color': 'white',
-                        'fontFamily': 'Verdana',
-                        'cursor': 'pointer'
-                    }
+                            'fontFamily': 'Avenir'
+                        }
                     )
-    ], style={'padding': '20px',
+                ]
+            )
+        ]
+    ),
 
-              }),
+    # Обертка для всего основного контента
+    html.Div(
+        id='main-content',
+        style={'display': 'none'},  # Изначально скрыто
+        children=[
+            # Компонент для перенаправления
+            dcc.Location(id='redirect-url', refresh=True),
 
-    # График с доходом
-    dcc.Graph(id='income-plot',
-              config={'responsive': True},
-              style={'height': '40vh'}
-              ),
+            html.H1("Ваш помощник по кредитам", style={'textAlign': 'center', 'color': corporate_colors['text']}),
 
-    # Блок с рекомендациями от GigaChat
-    html.Div([
-        html.H3("Ваши персональные рекомендации по кредитам", style={'margin': '20px 0'}),
-        dcc.Input(
-            id='user-question',
-            type='text',
-            placeholder='Введите ваш вопрос...',
-            style={
-                'width': '100%',
-                'height': '50px',
-                'fontSize': '18px',
-                'fontFamily': 'Verdana',
-                'marginBottom': '10px'
-            }
-        ),
-        html.Button('ОТПРАВИТЬ',
-                    id='submit-question',
-                    n_clicks=0,
-                    style={
-                        'fontSize': '18px',  # Уеличен шрифт кнопки
-                        'padding': '6px 12px',  # Увеличен размер кнопки
-                        'borderRadius': '5px',
-                        'backgroundColor': '#4B0082',
-                        'color': 'white',
-                        'fontFamily': 'Verdana',
-                        'cursor': 'pointer'
-                    }
+            html.Div([
+                html.H3("Выберите дату отчета из бюро кредитных историй",
+                        style={'textAlign': 'center', 'color': corporate_colors['text']}),
+                dcc.DatePickerSingle(
+                    id='report-date-filter',
+                    min_date_allowed=df['reporting_dt'].min(),
+                    max_date_allowed=df['reporting_dt'].max(),
+                    initial_visible_month=df['reporting_dt'].max(),
+                    date=df['reporting_dt'].max()
+                )
+            ], style={'width': '35%', 'padding': '10px'}),
+
+            # KPI метрики
+            html.Div(id='kpi-cards', style={
+                'display': 'grid',
+                'grid-template-columns': 'repeat(auto-fit, minmax(180px, 1fr))',
+                'gap': '10p x',
+                'padding': '5px'
+            }),
+
+            # Новые круговые диаграммы
+            html.Div([
+                html.Div([
+                    dcc.Graph(id='loan-kind-pie', config={'responsive': True}, style={'height': '40vh'}),
+                ], style={'width': '100%', 'padding': '10px'}),
+
+                html.Div([
+                    dcc.Graph(id='loan-purpose-pie', config={'responsive': True}, style={'height': '40vh'}),
+                ], style={'width': '100%', 'padding': '10px'}),
+
+                html.Div([
+                    dcc.Graph(id='rate-pie-chart', config={'responsive': True}, style={'height': '40vh'}),
+                ], style={'width': '100%', 'padding': '10px'}),
+
+            ]),
+            # Добавить после блока с круговыми диаграммами
+            html.Div([
+                html.H3("Кредитные карты", style={'margin': '20px 0', 'color': corporate_colors['text']}),
+                html.Div(id='credit-cards-buttons'),
+                html.Div(id='credit-card-details'),
+                dcc.Markdown(id='llm-output1', style={
+                    'background': corporate_colors['card'],
+                    'padding': '15px',
+                    'borderRadius': '5px',
+                    'marginTop': '10px',
+                    'border': '1px solid #EEE'
+                }),
+            ], style={'padding': '20px'}),
+
+            # Скрытый элемент для хранения данных о выборе
+            dcc.Store(id='crossfilter-selection', data=df.to_json(date_format='iso', orient='split')),
+
+            # В блоке layout добавьте новый компонент перед графиком платежей:
+            html.Div([
+                html.H3("Календарь платежей",
+                        style={'margin': '20px 0', 'color': corporate_colors['text'], 'fontSize': '24px'}),
+                html.Div([
+                    html.Button('◄', id='prev-month', n_clicks=0,
+                                style={'marginRight': '10px',
+                                       'border': 'none',
+                                       'background': 'none',
+                                       'cursor': 'pointer',
+                                       'fontSize': '36px',
+                                       'fontFamily': 'VAvenir'}),
+                    html.Span(id='current-month-year',
+                              style={'fontWeight': 'bold',
+                                     'marginRight': '10px',
+                                     'fontSize': '32px',
+                                     'fontFamily': 'Avenir'}),
+                    html.Button('►', id='next-month', n_clicks=0,
+                                style={'border': 'none',
+                                       'background': 'none',
+                                       'cursor': 'pointer',
+                                       'fontSize': '36px',
+                                       'fontFamily': 'Avenir'}),
+                ], style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '15px'}),
+                html.Div(id='payment-calendar',
+                         style={'backgroundColor': corporate_colors['card'],
+                                'padding': '15px',
+                                'borderRadius': '8px',
+                                'height': '800px'
+                                })
+            ], style={'padding': '20px'}),
+
+            # В макет добавьте:
+            html.Div([
+                dcc.Graph(id='payment-schedule', style={'width': '100%', 'padding': '10px'})
+            ], style={'padding': '20px'}),
+
+            # Таблица с задолженностью
+            html.Div([
+                html.H3("Список непогашенных кредитов", style={'margin': '20px 0'}),
+                dash_table.DataTable(
+                    style_data={
+                        'backgroundColor': corporate_colors['card'],
+                        'color': corporate_colors['text']
+                    },
+                    style_cell={
+                        'minWidth': '80px',
+                        'maxWidth': '120px',
+                        'fontSize': '12px',
+                        'padding': '5px'
+                    },
+                    style_header={
+                        'fontSize': '14px'
+                    },
+                    id='arrear-table',
+                    columns=[
+                        {'name': 'ID кредита', 'id': 'account_uid'},
+                        {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
+                        {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
+                        {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
+                        {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'},
+                        {'name': 'Процентная ставка', 'id': 'overall_val_credit_total_amt'}
+                    ],
+                    style_table={'overflowX': 'auto'},
+                    page_size=10
+
+                )
+            ], style={'padding': '20px'}),
+
+            html.Div([
+                html.H3("Выберите кредит для погашения", style={'margin': '20px 0', 'color': corporate_colors['text']}),
+                dcc.Dropdown(
+                    id='loan-selector',
+                    options=[
+                        {
+                            'label': f"Кредит ID: {row['account_uid']} (Задолженность: {row['arrear_principal_outstanding']} руб.)",
+                            'value': str(row['account_uid'])
+                        }
+                        for _, row in df.iterrows()
+                    ],
+                    placeholder="Выберите кредит...",
+                    style={'fontSize': '14px', 'marginBottom': '10px'}
+                ),
+                html.Div(id='selected-loan-details', style={'display': 'none'}, children=[
+                    dash_table.DataTable(
+                        id='loan-details-table',
+                        data=[],
+                        columns=[
+                            {'name': 'ID кредита', 'id': 'account_uid'},
+                            {'name': 'Сумма задолженности', 'id': 'arrear_amt_outstanding'},
+                            {'name': 'Дата расчета', 'id': 'arrear_calc_date'},
+                            {'name': 'Дата срочной задолженности', 'id': 'due_arrear_start_dt'},
+                            {'name': 'Сумма просрочки', 'id': 'past_due_amt_past_due'},
+                            {'name': 'Процентная ставка', 'id': 'overall_val_credit_total_amt'}
+                        ],
+                        style_table={'overflowX': 'auto'},
+                        style_cell={
+                            'minWidth': '80px',
+                            'maxWidth': '120px',
+                            'fontSize': '12px',
+                            'padding': '5px'
+                        },
+                        style_header={
+                            'fontSize': '14px'
+                        },
+                        style_data={
+                            'backgroundColor': corporate_colors['card'],
+                            'color': corporate_colors['text']
+                        }
                     ),
-        dcc.Markdown(id='llm-output', style={
-            'background': corporate_colors['card'],
-            'padding': '15px',
-            'borderRadius': '5px',
-            'marginTop': '10px',
-            # 'whiteSpace': 'pre-wrap'  # Для форматирования текста
-            'border': '1px solid #EEE'
-        })
-    ], style={'padding': '20px'}),
+
+                    html.H3("Что бы погасить выбранный кредит нажмите на кнопку", style={'margin': '20px 0'}),
+                    html.Button('ПОГАСИТЬ',
+                                id='repay-button',
+                                n_clicks=0,
+                                style={
+                                    'fontSize': '18px',
+                                    'padding': '6px 12px',
+                                    'borderRadius': '5px',
+                                    'backgroundColor': '#4B0082',
+                                    'color': 'white',
+                                    'fontFamily': 'Avenir',
+                                    'cursor': 'pointer',
+                                    'marginTop': '20px'
+                                }),
+                    dcc.ConfirmDialog(
+                        id='repay-confirm',
+                        message='Вы будете переведены в соответствующий раздел мобильного банка для внесения реквизитов. Продолжить оплату?',
+                    )
+                ])
+            ], style={'padding': '20px'}),
+            # Блок с доходом
+            html.Div([
+                dcc.Input(
+                    id='income-input',
+                    type='number',
+                    placeholder='Введите среднем.есячный доход',
+                    style={'marginRight': '10px',
+                           'marginLeft': '10px',
+                           'width': '15%',
+                           'height': '30px',
+                           'fontSize': '18px',
+                           'fontFamily': 'Avenir',
+                           'marginBottom': '10px'
+                           }
+                ),
+                html.Button('ДОБАВИТЬ',
+                            id='upgrade-button',
+                            n_clicks=0,
+                            style={
+                                'fontSize': '18px',
+                                'padding': '6px 12px',
+                                'borderRadius': '5px',
+                                'backgroundColor': '#4B0082',
+                                'color': 'white',
+                                'fontFamily': 'Avenir',
+                                'cursor': 'pointer'
+                            }
+                            )
+            ], style={'padding': '20px'}),
+
+            # График с доходом
+            dcc.Graph(id='income-plot',
+                      config={'responsive': True},
+                      style={'height': '40vh'}
+                      ),
+
+            # Блок с рекомендациями от GigaChat
+            html.Div([
+                html.H3("Ваши персональные рекомендации по кредитам", style={'margin': '20px 0'}),
+
+                # Выпадающий список с часто задаваемыми вопросами
+                dcc.Dropdown(
+                    id='frequent-questions',
+                    options=[
+                        {'label': 'Как снизить ежемесячные платежи?', 'value': 'Как снизить ежемесячные платежи?'},
+                        {'label': 'Какой кредит выгоднее погасить первым?', 'value': 'Какой кредит выгоднее погасить первым?'},
+                        {'label': 'Как рефинансировать кредиты?', 'value': 'Как рефинансировать кредиты?'},
+                        {'label': 'Как избежать просрочек?', 'value': 'Как избежать просрочек?'},
+                        {'label': 'Как оптимизировать кредитную нагрузку?', 'value': 'Как оптимизировать кредитную нагрузку?'},
+                    ],
+                    placeholder="Выберите часто задаваемый вопрос...",
+                    style={
+                        'marginBottom': '10px',
+                        'fontFamily': 'Avenir',
+                        'fontSize': '16px'
+                    }
+                ),
+
+                dcc.Input(
+                    id='user-question',
+                    type='text',
+                    placeholder='Введите ваш вопрос...',
+                    style={
+                        'width': '100%',
+                        'height': '50px',
+                        'fontSize': '18px',
+                        'fontFamily': 'Avenir',
+                        'marginBottom': '10px'
+                    }
+                ),
+                html.Button('ОТПРАВИТЬ',
+                            id='submit-question',
+                            n_clicks=0,
+                            style={
+                                'fontSize': '18px',
+                                'padding': '6px 12px',
+                                'borderRadius': '5px',
+                                'backgroundColor': '#4B0082',
+                                'color': 'white',
+                                'fontFamily': 'Avenir',
+                                'cursor': 'pointer'
+                            }
+                            ),
+                dcc.Markdown(id='llm-output', style={
+                    'background': corporate_colors['card'],
+                    'padding': '15px',
+                    'borderRadius': '5px',
+                    'marginTop': '10px',
+                    'border': '1px solid #EEE'
+                })
+            ], style={'padding': '20px'}),
+
+            # После блока с рекомендациями от GigaChat добавьте:
+            dcc.Store(id='show-disclaimer', data=False),  # Хранилище для состояния показа предупреждения
+
+            # Модальное окно с предупреждением
+            html.Div(
+                id='disclaimer-modal',
+                style={
+                    'position': 'fixed',
+                    'top': '0',
+                    'left': '0',
+                    'width': '100%',
+                    'height': '100%',
+                    'backgroundColor': 'rgba(0,0,0,0.5)',
+                    'zIndex': '1001',  # Выше, чем у окна согласия
+                    'display': 'none',  # По умолчанию скрыто
+                    'justifyContent': 'center',
+                    'alignItems': 'center'
+                },
+                children=[
+                    html.Div(
+                        style={
+                            'backgroundColor': corporate_colors['card'],
+                            'padding': '30px',
+                            'borderRadius': '15px',
+                            'maxWidth': '600px',
+                            'width': '90%',
+                            'textAlign': 'center',
+                            'boxShadow': '0 4px 20px rgba(0,0,0,0.25)'
+                        },
+                        children=[
+                            html.H2(
+                                "Важная информация",
+                                style={'color': corporate_colors['text'], 'marginBottom': '20px'}
+                            ),
+                            dcc.Markdown(
+                                """
+                                **Обратите внимание:**
+                                - Предоставляемые рекомендации не являются инвестиционной стратегией
+                                - Компания не несет ответственности за решения, принятые на основе этих рекомендаций
+                                - Все финансовые решения вы принимаете на свой собственный риск
+                                """,
+                                style={'marginBottom': '30px', 'fontSize': '18px', 'textAlign': 'left'}
+                            ),
+                            html.Button(
+                                'Я понимаю',
+                                id='disclaimer-ok-button',
+                                style={
+                                    'padding': '12px 24px',
+                                    'fontSize': '18px',
+                                    'backgroundColor': '#4B0082',
+                                    'color': 'white',
+                                    'borderRadius': '8px',
+                                    'border': 'none',
+                                    'cursor': 'pointer',
+                                    'fontFamily': 'Avenir',
+                                    'margin': '0 auto',
+                                    'display': 'block'}
+                            )
+                        ]
+                    )
+                ]
+            )
+
+        ]
+    )
 ])
 
 
@@ -407,12 +547,14 @@ app.layout = html.Div(style={'backgroundColor': corporate_colors['background'],
 @callback(
     [Output('crossfilter-selection', 'data'),
      Output('kpi-cards', 'children'),
-     Output('llm-output', 'children')],
+     Output('llm-output', 'children'),
+     Output('show-disclaimer', 'data', allow_duplicate=True)],
     [Input('report-date-filter', 'date'),
      Input('submit-question', 'n_clicks')],
     [State('user-question', 'value'),
      State('crossfilter-selection', 'data'),
-     State('income-input', 'value')]
+     State('income-input', 'value')],
+    prevent_initial_call=True
 )
 def unified_callback(selected_date, n_clicks, question, filtered_data, user_income):
     ctx = dash.callback_context
@@ -424,7 +566,8 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
     if triggered_id in ['report-date-filter', None]:
         # Фильтрация по дате
         if selected_date:
-            filtered_df = filtered_df[filtered_df['reporting_dt'] == pd.to_datetime(selected_date)]
+            selected_date_dt = pd.to_datetime(selected_date)
+            filtered_df = filtered_df[filtered_df['reporting_dt'].dt.date == selected_date_dt.date()]
 
         # Расчет KPI
         total_principal = filtered_df['arrear_principal_outstanding'].sum()
@@ -437,19 +580,6 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
         max_rate = filtered_df['overall_val_credit_total_amt'].max()
         total_past_due_principal = filtered_df['past_due_amt_past_due'].sum()
         total_past_due_interest = filtered_df['past_due_int_amt_past_due'].sum()
-
-        # Добавить здесь вывод KPI данных
-        print("\n" + "=" * 40)
-        print("АКТУАЛЬНЫЕ KPI ДАННЫЕ:")
-        print(f"- Основной долг: {total_principal:,.0f} ₽")
-        print(f"- Проценты: {total_interest:,.0f} ₽")
-        print(f"- Средний платеж: {avg_monthly:,.0f} ₽")
-        print(f"- Средняя ставка: {avg_rate:.1f}%")
-        print(f"- Минимальная ставка: {min_rate:.1f}%")
-        print(f"- Максимальная ставка: {max_rate:.1f}%")
-        print(f"- Просрочка (осн.): {total_past_due_principal:,.0f} ₽")
-        print(f"- Просрочка (%): {total_past_due_interest:,.0f} ₽")
-        print("=" * 40 + "\n")
 
         kpi_cards = [
             create_kpi_card("Основной долг", total_principal, "#1f77b4"),
@@ -472,21 +602,77 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
     elif triggered_id == 'submit-question' and question:
         try:
             # Фильтрация данных
-            filtered_df = pd.read_json(filtered_data, orient='split')
+            filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
             # Формируем KPI data
             kpi_data = {
                 'total_principal': filtered_df['arrear_principal_outstanding'].sum(),
-                'total_interest': filtered_df['arrear_int_outstanding'].sum(),
-                'avg_monthly': filtered_df['month_aver_paymt_aver_paymt_amt'].sum(),
+                # Сумма основного долга по задолженности
+                'total_interest': filtered_df['arrear_int_outstanding'].sum(),  # Сумма процентов по задолженности
+                'avg_monthly': filtered_df['month_aver_paymt_aver_paymt_amt'].sum(),  # Среднемесячный платеж
                 'avg_rate': filtered_df['overall_val_credit_total_amt'].mean(),
+                # Полная стоимость кредита (займа) в процентах годовых
                 'min_rate': filtered_df['overall_val_credit_total_amt'].min(),
                 'max_rate': filtered_df['overall_val_credit_total_amt'].max(),
                 'total_past_due_principal': filtered_df['past_due_amt_past_due'].sum(),
+                # Сумма просроченной задолженности
                 'total_past_due_interest': filtered_df['past_due_int_amt_past_due'].sum(),
-                'credit_cards_info': "..."  # Ваша логика формирования
+                # Сумма процентов по просроченной задолженности
+                'credit_cards_info': "...",  # Ваша логика формирования
+                'num_active_loans': len(filtered_df),
+                'num_overdue_loans': len(filtered_df[filtered_df['past_due_amt_past_due'] > 0]),
+                'overdue_categories': {
+                    'less_6_days': filtered_df['delay5'].sum(),
+                    '6_30_days': filtered_df['delay30'].sum(),
+                    '31_60_days': filtered_df['delay60'].sum(),
+                    '61_90_days': filtered_df['delay90'].sum(),
+                    '90_plus_days': filtered_df['delay_more'].sum(),
+                },
+                'max_overdue': filtered_df['cred_max_overdue'].max(),
+                # 'loan_types': filtered_df.groupby('trade_loan_kind_code')['arrear_principal_outstanding'].agg(['count', 'sum']).to_dict(),
+                # 'loan_purposes': filtered_df.groupby('trade_acct_type1')['arrear_principal_outstanding'].agg(['count', 'sum']).to_dict(),
+                'monthly_payment_load': (
+                        filtered_df['paymnt_condition_principal_terms_amt'].sum() +
+                        filtered_df['paymnt_condition_interest_terms_amt'].sum()
+                )
+                # 'last_overdue_date': (
+                #     pd.to_datetime(filtered_df['past_due_calc_date'].max().strftime('%Y-%m-%d'))
+                #     if not filtered_df['past_due_calc_date'].isna().all()
+                #     else 'Нет данных'
+                # ),
+                # 'new_loans_last_year': len(
+                #     filtered_df[
+                #         filtered_df['fund_date'] >= filtered_df['reporting_dt'] - pd.Timedelta(days=365)
+                #     ]
+                # )
 
             }
+
+            # В блоке формирования kpi_data добавьте:
+            kpi_data['active_loans'] = [
+                {
+                    'id': str(row.get('account_uid', 'N/A')),
+                    'debt': float(row.get('arrear_amt_outstanding', 0)),
+                    'calc_date': row.get('arrear_calc_date', 'Не указана'),
+                    'due_date': row.get('due_arrear_start_dt', 'Не указана'),
+                    'past_due': float(row.get('past_due_amt_past_due', 0)),
+                    'rate': float(row.get('overall_val_credit_total_amt', 0))
+                }
+                for _, row in filtered_df.iterrows()
+            ]
+
+            kpi_data['loan_types'] = (
+                filtered_df.groupby('trade_loan_kind_code')
+                .agg(
+                    count=('arrear_principal_outstanding', 'count'),
+                    sum=('arrear_principal_outstanding', 'sum'),
+                    max_rate=('overall_val_credit_total_amt', 'max')
+                )
+                .reset_index()
+                .rename(columns={'trade_loan_kind_code': 'loan_type'})
+                .to_dict(orient='records')
+            ) if all(
+                col in filtered_df.columns for col in ['trade_loan_kind_code', 'overall_val_credit_total_amt']) else []
 
             # Вызываем send_prompt_to_llm с вопросом
             response = send_prompt_to_llm(
@@ -496,16 +682,103 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
                 user_income=user_income
             )
 
-            return dash.no_update, dash.no_update, response.choices[0].message.content
+            return dash.no_update, dash.no_update, response.choices[0].message.content, True
 
         except Exception as e:
-            return dash.no_update, dash.no_update, f"Ошибка: {str(e)}"
+            return dash.no_update, dash.no_update, f"Ошибка: {str(e)}", False
 
-    return dash.no_update, dash.no_update, "Ожидаю ваш вопрос..."
-
-
+    return dash.no_update, dash.no_update, "Ожидаю ваш вопрос...", False
 
 
+# @callback(
+#     [Output('crossfilter-selection', 'data'),
+#      Output('kpi-cards', 'children'),
+#      Output('llm-output', 'children')],
+#     [Input('report-date-filter', 'date'),
+#      Input('submit-question', 'n_clicks')],
+#     [State('user-question', 'value'),
+#      State('crossfilter-selection', 'data'),
+#      State('income-input', 'value')]
+# )
+# def unified_callback(selected_date, n_clicks, question, filtered_data, user_income):
+#     ctx = dash.callback_context
+#     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+#
+#     # Чтение и фильтрация данных
+#     filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split') if filtered_data else df.copy()
+#     filtered_df = filtered_df[filtered_df["Признак задолженности"] == 1].copy()
+#
+#     if selected_date:
+#         selected_date_dt = pd.to_datetime(selected_date)
+#         filtered_df = filtered_df[filtered_df['Дата отчета'].dt.date == selected_date_dt.date()]
+#
+#     # Агрегации
+#     kpi_data = {
+#         'total_principal': filtered_df['Сумма основного долга по задолженности'].sum(),
+#         'total_interest': filtered_df['Сумма процентов по задолженности'].sum(),
+#         'avg_monthly': filtered_df['Среднемесячный платеж'].sum(),
+#         'avg_rate': filtered_df['Полная стоимость кредита (займа) в процентах годовых'].mean(),
+#         'min_rate': filtered_df['Полная стоимость кредита (займа) в процентах годовых'].min(),
+#         'max_rate': filtered_df['Полная стоимость кредита (займа) в процентах годовых'].max(),
+#         'total_past_due_principal': filtered_df['Сумма просроченной задолженности'].sum(),
+#         'total_past_due_interest': filtered_df['Сумма процентов по просроченной задолженности'].sum(),
+#         'num_active_loans': len(filtered_df),
+#         'num_overdue_loans': len(filtered_df[filtered_df['Сумма просроченной задолженности'] > 0]),
+#         'overdue_categories': {
+#             'less_6_days': filtered_df['Кол–во закрытых просрочек – менее 6 дней'].sum(),
+#             '6_30_days': filtered_df['Кол–во закрытых просрочек – от 6 до 30 дней'].sum(),
+#             '31_60_days': filtered_df['Кол–во закрытых просрочек – от 31 до 60 дней'].sum(),
+#             '61_90_days': filtered_df['Кол–во закрытых просрочек – от 61 до 90 дней'].sum(),
+#             '90_plus_days': filtered_df['Кол–во закрытых просрочек – более 90 дней'].sum(),
+#         },
+#         'max_overdue': filtered_df['Максимальная просрочка'].max(),
+#         'loan_types': filtered_df.groupby('Вид займа')['Сумма основного долга по задолженности'].agg(['count', 'sum']).to_dict(),
+#         'loan_purposes': filtered_df.groupby('Тип счета')['Сумма основного долга по задолженности'].agg(['count', 'sum']).to_dict(),
+#         'monthly_payment_load': (
+#             filtered_df['Сумма платежа по основному долгу'].sum() +
+#             filtered_df['Сумма платежа по процентам'].sum()
+#         ),
+#         'last_overdue_date': (
+#             filtered_df['Дата расчета просроченной задолженности'].max().strftime('%Y-%m-%d')
+#             if not filtered_df['Дата расчета просроченной задолженности'].isna().all()
+#             else 'Нет данных'
+#         ),
+#         'new_loans_last_year': len(
+#             filtered_df[
+#                 filtered_df['Дата финансирования'] >= pd.to_datetime(selected_date) - pd.Timedelta(days=365)
+#             ]
+#         )
+#     }
+#
+#     # KPI для карточек
+#     kpi_cards = [
+#         create_kpi_card("Основной долг", kpi_data['total_principal'], "#1f77b4"),
+#         create_kpi_card("Проценты", kpi_data['total_interest'], "#2ca02c"),
+#         create_kpi_card("Ср.месячн. платеж", kpi_data['avg_monthly'], "#9467bd"),
+#         create_kpi_card("Ср. ставка", f"{kpi_data['avg_rate']:.1f}%", "#FFA500"),
+#         create_kpi_card("Мин. ставка", f"{kpi_data['min_rate']:.1f}%", "#32CD32"),
+#         create_kpi_card("Макс. ставка", f"{kpi_data['max_rate']:.1f}%", "#FF4500"),
+#         create_kpi_card("Просрочка (осн.)", kpi_data['total_past_due_principal'], "#8B0000"),
+#         create_kpi_card("Просрочка (%)", kpi_data['total_past_due_interest'], "#4B0082"),
+#         create_kpi_card("Активные кредиты", kpi_data['num_active_loans'], "#4B0082"),
+#         create_kpi_card("Кредиты с просрочкой", kpi_data['num_overdue_loans'], "#FF0000")
+#     ]
+#
+#     # Обработка пользовательского вопроса
+#     if triggered_id == 'submit-question' and question:
+#         try:
+#             response = send_prompt_to_llm(
+#                 kpi_data=kpi_data,
+#                 giga_token=giga_token,
+#                 user_question=question,
+#                 user_income=user_income,
+#                 default_prob=default_prob
+#             )
+#             return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, response.choices[0].message.content
+#         except Exception as e:
+#             return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, f"Ошибка: {str(e)}"
+#
+#     return filtered_df.to_json(date_format='iso', orient='split'), kpi_cards, "Задайте вопрос в поле выше"
 
 @callback(
     [Output('loan-kind-pie', 'figure'),
@@ -519,12 +792,30 @@ def unified_callback(selected_date, n_clicks, question, filtered_data, user_inco
 )
 def update_additional_elements(filtered_data, n_clicks, income):
     try:
-        filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
-        # Добавляем преобразование типа для 'fund_date'
-        if not filtered_df.empty and 'fund_date' in filtered_df.columns:
-            filtered_df['fund_date'] = pd.to_datetime(filtered_df['fund_date'])
-    except:
-        filtered_df = pd.DataFrame()
+        if not filtered_data:
+            # Возвращаем заглушки для всех выходов
+            empty_fig = px.scatter(title="Нет данных").update_layout(
+                plot_bgcolor=corporate_colors['card'],
+                paper_bgcolor=corporate_colors['background'],
+                font_color=corporate_colors['text']
+            )
+            return empty_fig, empty_fig, empty_fig, [], empty_fig
+        # Чтение данных
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
+        # print(f"[DEBUG] Данные получены. Колонки: {filtered_df.columns.tolist()}")
+
+        # Преобразование даты (если нужно)
+        if 'fund_date' in filtered_df.columns:
+            filtered_df['fund_date'] = pd.to_datetime(filtered_df['fund_date'], errors='coerce')
+
+    except Exception as e:
+        # print(f"[ERROR] Ошибка в update_additional_elements: {str(e)}")
+        empty_fig = px.scatter(title="Ошибка данных").update_layout(
+            plot_bgcolor=corporate_colors['card'],
+            paper_bgcolor=corporate_colors['background'],
+            font_color=corporate_colors['text']
+        )
+        return empty_fig, empty_fig, empty_fig, [], empty_fig
 
     # Заглушки для пустых данных
     empty_fig = px.scatter(title="Нет данных").update_layout(
@@ -533,7 +824,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         font_color=corporate_colors['text']
     )
     if filtered_df.empty:
-        return empty_fig, empty_fig, [], empty_fig
+        return empty_fig, empty_fig, empty_fig, [], empty_fig
 
     # Круговые диаграммы
     loan_kind_fig = px.pie(
@@ -547,13 +838,13 @@ def update_additional_elements(filtered_data, n_clicks, income):
         texttemplate='%{value:,.0f} ₽',
         textposition='outside'
     ).update_layout(
-        # font_family='Verdana',
+        # font_family='Avenir',
         # font_color=corporate_colors['text'],
         # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
         # title_font_size=18,
         # title_font_color='#5D3FBA'
-        font_family='Verdana',
+        font_family='Avenir',
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -568,7 +859,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title_font_size=18,
         title_x=0.5,
         title_y=0.95,  # Центрируем заголовок
-        height=250,
+        height=370,
         autosize=False
     )
 
@@ -583,7 +874,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         texttemplate='%{value:,.0f} ₽',
         textposition='outside'
     ).update_layout(
-        font_family='Verdana',
+        font_family='Avenir',
         # font_color=corporate_colors['text'],
         # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
@@ -601,7 +892,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title_font_size=18,
         title_x=0.5,
         title_y=0.95,  # Центрируем заголовок
-        height=250,
+        height=290,
         autosize=False
     )
     # Новая круговая диаграмма
@@ -616,7 +907,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         texttemplate='%{value:,.0f} ₽',
         textposition='outside'
     ).update_layout(
-        font_family='Verdana',
+        font_family='Avenir',
         # font_color=corporate_colors['text'],
         # plot_bgcolor=corporate_colors['card'],
         paper_bgcolor=corporate_colors['background'],
@@ -634,7 +925,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
         title_font_size=18,
         title_x=0.5,
         title_y=0.95,  # Центрируем заголовок
-        height=250,
+        height=330,
         autosize=False
     )
 
@@ -644,34 +935,6 @@ def update_additional_elements(filtered_data, n_clicks, income):
         'account_uid', 'arrear_amt_outstanding',
         'arrear_calc_date', 'due_arrear_start_dt', 'past_due_amt_past_due', 'overall_val_credit_total_amt'
     ]].to_dict('records')
-
-    # График с доходом
-    # income_fig = go.Figure()
-    # if n_clicks > 0 and income is not None and not filtered_df.empty and 'fund_date' in filtered_df.columns:
-    #     monthly_debt = filtered_df.resample('M', on='fund_date')['account_amt_credit_limit'].mean()
-    #     income_fig.add_trace(go.Scatter(
-    #         x=monthly_debt.index,
-    #         y=monthly_debt.values,
-    #         name='Средняя задолженность'
-    #     ))
-    #     income_fig.add_hline(
-    #         y=income,
-    #         line_dash="dash",
-    #         line_color="red",
-    #         annotation_text=f"Доход: {income}"
-    #     )
-    #     income_fig.update_layout(
-    #         title="Задолженность vs Доход",
-    #         plot_bgcolor=corporate_colors['card'],
-    #         paper_bgcolor=corporate_colors['background'],
-    #         font_color=corporate_colors['text']
-    #     )
-    # else:
-    #     income_fig = empty_fig.update_layout(title="Задолженность vs Доход")
-    #
-    # return loan_kind_fig, loan_purpose_fig, rate_pie_fig, table_data, income_fig
-
-    # В функции update_additional_elements замените блок с income_fig:
 
     # График с доходом
     income_fig = go.Figure()
@@ -734,7 +997,7 @@ def update_additional_elements(filtered_data, n_clicks, income):
     Input('crossfilter-selection', 'data')
 )
 def update_payment_chart(filtered_data):
-    filtered_df = pd.read_json(filtered_data, orient='split')
+    filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
     fig = go.Figure()
 
@@ -817,14 +1080,53 @@ def create_kpi_card(title, value, color):
 def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_income=None):
     credentials = giga_token
 
+    # Формирование строки с данными о просрочках
+    overdue_info = (
+        f"- Просрочки до 6 дней: {kpi_data['overdue_categories']['less_6_days']} случаев\n"
+        f"- Просрочки 6–30 дней: {kpi_data['overdue_categories']['6_30_days']} случаев\n"
+        f"- Просрочки 31–60 дней: {kpi_data['overdue_categories']['31_60_days']} случаев\n"
+        f"- Просрочки 61–90 дней: {kpi_data['overdue_categories']['61_90_days']} случаев\n"
+        f"- Просрочки более 90 дней: {kpi_data['overdue_categories']['90_plus_days']} случаев\n"
+        f"- Максимальная просрочка: {kpi_data['max_overdue']:,.0f} ₽\n"
+    )
+    loans_info = "\n".join(
+        f"{idx + 1}. Кредит ID: {loan['id']}\n"
+        f"   - Сумма задолженности: {loan['debt']:,.0f} ₽\n"
+        f"   - Дата расчета: {loan['calc_date']}\n"
+        f"   - Дата просрочки: {loan['due_date']}\n"
+        f"   - Просроченная сумма: {loan['past_due']:,.0f} ₽\n"
+        f"   - Ставка: {loan['rate']}%"
+        for idx, loan in enumerate(kpi_data.get('active_loans', []))
+    )
+    loan_types_info = "\n".join(
+        f"- {lt['loan_type']}: {lt['count']} кредитов, сумма {lt['sum']:,.0f} ₽, макс. ставка {lt['max_rate']}%"
+        for lt in kpi_data.get('loan_types', [])
+    )
+    # Формирование строки с типами кредитов
+    # loan_types_info = "\n".join(
+    #     f"- {loan_type}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
+    #     for loan_type, data in kpi_data['loan_types'].items()
+    # )
+    # loan_purposes_info = "\n".join(
+    #     f"- {purpose}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
+    #     for purpose, data in kpi_data['loan_purposes'].items()
+    # )
     prompt = f"""
-    ### Кредитные показатели:
+    ### Ваша кредитная ситуация:
+    - Количество активных кредитов: {kpi_data['num_active_loans']}
+    - Детализация активных кредитов: {loans_info if loans_info else "Нет данных о кредитах"}
+    - Кредиты с просрочками: {kpi_data['num_overdue_loans']} из {kpi_data['num_active_loans']}
     - Средняя ставка: {kpi_data['avg_rate']:.1f}%
     - Минимальная ставка: {kpi_data['min_rate']:.1f}%
     - Максимальная ставка: {kpi_data['max_rate']:.1f}%
     - Просрочка по основному долгу: {kpi_data['total_past_due_principal']:,.0f} ₽
     - Просрочка по процентам: {kpi_data['total_past_due_interest']:,.0f} ₽
-    - Вероятность невозрата долга {default_prob:.1f}%"
+    - История просрочек:\n{overdue_info}
+    - Вероятность невозрата долга {default_prob:.1f}%
+    - Ежемесячная платежная нагрузка (основной долг + проценты): {kpi_data['monthly_payment_load']:,.0f} ₽
+    - Виды кредитов:\n{loan_types_info}
+
+
     ### Контекст анализа:
     - Основной долг: {kpi_data['total_principal']:,.0f} ₽
     - Начисленные проценты: {kpi_data['total_interest']:,.0f} ₽
@@ -835,26 +1137,143 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
     {user_question if user_question else 'Общие рекомендации'}
 
     ### Задача:
-    1. Дать ответ строго по вопросу
-    2. Учесть финансовые показатели
-    3. Предложить конкретные шаги
-    4. Формат: маркированный список
-    5. Учесть вероятность просрочки {default_prob:.1f}%
-    
-    ### Учитывать в ответе:
-    1. Использовать больше конкретных данных (например, просрочки, доход) для анализа.
-    2. Упрощать формулы (например, заменить математические выражения на примеры).
-    3. Предлагать рефинансирование учитывая ключевую ставку, консолидацию долгов или оптимизацию бюджета.
-    4. Сравнивать ставки клиентов с ключевой ставкой ЦБ как ориентир для банков (16%) и давать советы на основе этого.
-    """
+    - Ответить на вопрос пользователя конкретно, если пользователь спрашивает конкретные данные, суммы, срок и т.д.
+    - Дать рекомендации (не более 3) по управлению долгами, если пользователь не спрашивает конкретные данные по своей ситуации.
 
+    - Учитывать:
+      - Виды кредитов (например, микрозаймы, ипотека, потребительские кредиты) для приоритизации действий.
+      - Просрочки для минимизации ущерба кредитной истории.
+      - Ставки кредитов в сравнении с ключевой ставкой ЦБ (21%) для рекомендаций по рефинансированию.
+      - Доход и платежную нагрузку (выше 40% от дохода — высокая нагрузка).
+      - Вероятность невозврата ({default_prob:.1f}%) для оценки рисков.
+    - Формат ответа: маркированный список.
+
+    ### Требования к ответу:
+    1.  **Запреты**:
+       - ❌ Категорически запрещены шаблонные рекомендации без данных пользователя, такие как:
+         - "Платите вовремя"
+         - "Сократите расходы"
+         - "Увеличьте доход"
+         - "Следите за бюджетом"
+         - "Не берите новые кредиты"
+         - "Ведение бюджета и контроль расходов"
+         - "Используйте дополнительный доход для погашения мелких кредитов"
+         - "Оптимизируйте бюджет"
+         - "Пересмотрите структуру кредитов"
+         - "Управляйте просрочками"
+         - "Избегайте новых просрочек"
+       - ❌ Не использовать советы, без данных клиента.
+       - ❌ Не использовать советы, которые можно дать любому заемщику.
+       - ❌ Не включать рекомендации без связи с конкретными числами или фактами из данных.
+       - ❌ Не копировать советы между пользователями.
+       - ❌ Не использовать общие фразы без объяснений: если предлагается “рефинансировать кредит” — укажите, какой, под какую ставку, где и почему.
+    2. **Персонализация**:
+       - Использовать конкретные данные пользователя.
+       - Если доход указан, рассчитать долю платежей от дохода пользователя.
+       - Упомянуть конкретные кредиты с высокими ставками или просрочками для рекомендаций.
+    3. **Простота и понятность**:
+       - Использовать простой язык, избегая терминов вроде "консолидация", "дефолт", "рефинансирование" без объяснений.
+       - Вместо формул приводить примеры с цифрами пользователя.
+       - Объяснять сложные действия через аналогии.
+    3. **Неочевидные рекомендации**:
+   - Категорически запрещено предлагать шаблонные советы, такие как "платите вовремя", "сократите расходы", "увеличьте доход", "погасите долг раньше срока" или "ведите бюджет". Эти советы слишком общие и не помогают пользователю найти уникальные решения.
+   - Предлагать креативные и нестандартные решения, адаптированные к данным пользователя.
+   - Каждая рекомендация должна быть уникальной и не повторять советы для других заемщиков.
+   - Указать, почему рекомендация подходит именно этому пользователю, ссылаясь на его данные.
+    4. **Конкретность**:
+       - Указывать, сколько пользователь сэкономит или как улучшится ситуация.
+       - Приводить примеры, как рекомендации работают на данных пользователя.
+    5. **Формат ответа**:
+       - Маркированный список рекомендациями - не более 3.
+       - Каждая рекомендация включает: действие, почему оно важно, и как оно поможет (с цифрами).
+
+    """
     if user_income:
         prompt += f"\nРасчеты с учетом дохода {user_income} ₽:"
         prompt += f"\n- Макс. рекомендуемый платеж: {user_income * 0.4:.0f} ₽"
+    try:
+        with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+            return giga.chat(prompt)
+    except Exception as e:
+        print(f"Ошибка GigaChat: {str(e)}")
+        return "Не удалось получить рекомендации. Пожалуйста, попробуйте позже."
 
-    with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
-        return giga.chat(prompt)
 
+# def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_income=None, default_prob=None):
+#     credentials = giga_token
+#
+# Формирование строки с данными о просрочках
+# overdue_info = (
+#     f"- Просрочки до 6 дней: {kpi_data['overdue_categories']['less_6_days']} случаев\n"
+#     f"- Просрочки 6–30 дней: {kpi_data['overdue_categories']['6_30_days']} случаев\n"
+#     f"- Просрочки 31–60 дней: {kpi_data['overdue_categories']['31_60_days']} случаев\n"
+#     f"- Просрочки 61–90 дней: {kpi_data['overdue_categories']['61_90_days']} случаев\n"
+#     f"- Просрочки более 90 дней: {kpi_data['overdue_categories']['90_plus_days']} случаев\n"
+#     f"- Максимальная просрочка: {kpi_data['max_overdue']:,.0f} ₽\n"
+#     f"- Последняя просрочка: {kpi_data['last_overdue_date']}"
+# )
+#
+#     # Формирование строки с типами кредитов
+#     loan_types_info = "\n".join(
+#         f"- {loan_type}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
+#         for loan_type, data in kpi_data['loan_types'].items()
+#     )
+#     loan_purposes_info = "\n".join(
+#         f"- {purpose}: {data['count']} кредитов, сумма {data['sum']:,.0f} ₽"
+#         for purpose, data in kpi_data['loan_purposes'].items()
+#     )
+#
+#     prompt = f"""
+#     ### Кредитный профиль клиента:
+#     - Количество активных кредитов: {kpi_data['num_active_loans']}
+#     - Кредиты с просрочками: {kpi_data['num_overdue_loans']} из {kpi_data['num_active_loans']}
+#     - Общий основной долг: {kpi_data['total_principal']:,.0f} ₽
+#     - Общие проценты: {kpi_data['total_interest']:,.0f} ₽
+#     - Средний ежемесячный платеж: {kpi_data['avg_monthly']:,.0f} ₽
+#     - Ежемесячная платежная нагрузка (основной долг + проценты): {kpi_data['monthly_payment_load']:,.0f} ₽
+#     - Средняя процентная ставка: {kpi_data['avg_rate']:.1f}%
+#     - Минимальная ставка: {kpi_data['min_rate']:.1f}%
+#     - Максимальная ставка: {kpi_data['max_rate']:.1f}%
+#     - Просроченный основной долг: {kpi_data['total_past_due_principal']:,.0f} ₽
+#     - Просроченные проценты: {kpi_data['total_past_due_interest']:,.0f} ₽
+#     - Вероятность дефолта: {default_prob:.1f}%
+#     - Новые кредиты за последний год: {kpi_data['new_loans_last_year']}
+#     - История просрочек:\n{overdue_info}
+#     - Виды кредитов:\n{loan_types_info}
+#     - Цели кредитов:\n{loan_purposes_info}
+#     - Доход клиента: {user_income if user_income else 'не указан'} ₽
+#
+#     ### Пользовательский вопрос:
+#     {user_question if user_question else 'Дайте рекомендации по управлению долгами'}
+#
+#     ### Задача:
+#     - Ответить на вопрос пользователя или дать рекомендации по управлению долгами.
+#     - Учитывать данные кредитной истории, включая виды кредитов, просрочки и ставки.
+#     - Объяснять рекомендации простым языком, избегая сложных финансовых терминов.
+#     - Предлагать неочевидные шаги, например:
+#       - Рефинансирование кредитов с высокими ставками (выше 16% — ключевой ставки ЦБ).
+#       - Консолидацию мелких кредитов для снижения платежной нагрузки.
+#       - Приоритизацию погашения кредитов с просрочками более 90 дней.
+#       - Оптимизацию бюджета с учетом дохода.
+#     - Сравнивать ставки клиента с ключевой ставкой ЦБ (16%) для рекомендаций по рефинансированию.
+#     - Формат ответа: маркированный список.
+#
+#     ### Требования к ответу:
+#     - Персонализировать рекомендации, используя данные о просрочках, видах кредитов и доходе.
+#     - Объяснять, как рекомендации помогут клиенту (например, снизят платежи или улучшат кредитную историю).
+#     - Избегать шаблонных советов вроде "платите вовремя".
+#     - Если доход указан, рассчитать, какую часть дохода составляют платежи, и предложить действия, если нагрузка выше 40%.
+#
+#     ### Пример расчета:
+#     {f"Максимальный рекомендуемый платеж: {user_income * 0.4:.0f} ₽ (40% от дохода)" if user_income else ""}
+#     """
+#
+#     try:
+#         with GigaChat(credentials=credentials, verify_ssl_certs=False) as giga:
+#             return giga.chat(prompt)
+#     except Exception as e:
+#         print(f"Ошибка GigaChat: {str(e)}")
+#         return "Не удалось получить рекомендации. Пожалуйста, попробуйте позже."
 
 # Колбэк для создания кнопок
 @callback(
@@ -864,23 +1283,17 @@ def send_prompt_to_llm(kpi_data: dict, giga_token, user_question=None, user_inco
 def update_credit_cards_buttons(filtered_data):
     try:
         # Чтение и преобразование данных
-        filtered_df = pd.read_json(filtered_data, orient='split')
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
 
-        # Отладочный вывод структуры данных
-        print("\nСтруктура данных перед обработкой:")
-        print(filtered_df[['trade_loan_kind_code', 'arrear_sign']].dtypes)
+        # Преобразование типов с обработкой ошибок
 
-        # # Преобразование типов с обработкой ошибок
-        # filtered_df['trade_loan_kind_code'] = pd.to_numeric(
-        #     filtered_df['trade_loan_kind_code'], errors='coerce'
-        # )
         filtered_df['arrear_sign'] = pd.to_numeric(
             filtered_df['arrear_sign'], errors='coerce'
         )
 
         # Фильтрация данных
         credit_cards = filtered_df[
-            (filtered_df['trade_loan_kind_code'] == 'Кредитная линия с лимитом задолженности') &
+            (filtered_df['trade_loan_kind_code'].astype(str) == 'Кредитная линия с лимитом задолженности') &
             (filtered_df['arrear_sign'] == 1)
             ]
 
@@ -966,7 +1379,7 @@ def show_credit_card_details(clicks, filtered_data):
         return dash.no_update, dash.no_update
 
     try:
-        filtered_df = pd.read_json(filtered_data, orient='split')
+        filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
         account_uid = str(json.loads(button_id)['index'])
 
@@ -1082,6 +1495,7 @@ def update_loan_details(selected_loan):
      State('report-date-filter', 'date')]
 )
 def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, report_date):
+    # print(f"Данные для календаря: {filtered_df.shape if not filtered_df.empty else 'пусто'}")
     ctx = dash.callback_context
 
     # Определяем начальный месяц и год
@@ -1116,7 +1530,22 @@ def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, re
                 month = 1
                 year += 1
 
-    filtered_df = pd.read_json(filtered_data, orient='split') if filtered_data else pd.DataFrame()
+    # filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split') if filtered_data else pd.DataFrame()
+    # Исправленный блок чтения данных
+    try:
+        if filtered_data:
+            filtered_df = pd.read_json(io.StringIO(filtered_data), orient='split')
+        else:
+            filtered_df = pd.DataFrame()
+    except Exception as e:
+        print(f"Ошибка чтения данных: {str(e)}")
+        filtered_df = pd.DataFrame()
+
+    # Исправленный принт
+    if not filtered_df.empty:
+        print(f"Данные для календаря: {filtered_df.shape}")
+    else:
+        print("Данные для календаря: пусто")
 
     # Создаем словарь с суммами платежей по дням
     payment_dict = {}
@@ -1153,7 +1582,7 @@ def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, re
     # Создаем HTML для календаря
     html_cal = f"""
     <table style="
-        font-family: Verdana, sans-serif;
+        font-family: Avenir, sans-serif;
         font-size: 20px;
         width: 100%;
         border-collapse: separate;
@@ -1215,6 +1644,50 @@ def update_calendar(prev_clicks, next_clicks, filtered_data, current_display, re
         }
     ), month_year_display
 
+@app.callback(
+    [Output('consent-modal', 'style'),
+     Output('main-content', 'style'),
+     Output('consent-given', 'data')],
+    [Input('consent-button', 'n_clicks')]
+)
+def handle_consent(n_clicks):
+    if n_clicks:
+        # Скрыть модалку, показать основной контент
+        return {'display': 'none'}, {'display': 'block'}, True
+    # По умолчанию показать модалку
+    return {'display': 'flex'}, {'display': 'none'}, False
+
+@app.callback(
+    Output('user-question', 'value'),
+    [Input('frequent-questions', 'value')],
+    prevent_initial_call=True
+)
+def update_user_question_from_dropdown(selected_question):
+    """Обновляет поле ввода при выборе вопроса из выпадающего списка"""
+    if selected_question:
+        return selected_question
+    return dash.no_update
+
+
+@app.callback(
+    [Output('disclaimer-modal', 'style'),
+     Output('show-disclaimer', 'data', allow_duplicate=True)],
+    [Input('disclaimer-ok-button', 'n_clicks'),
+     Input('show-disclaimer', 'data')],
+    prevent_initial_call=True
+)
+def handle_disclaimer(ok_clicks, show_flag):
+    ctx = dash.callback_context
+
+    # Если нужно показать предупреждение
+    if show_flag:
+        return {'display': 'flex'}, False
+
+    # Если нажата кнопка "Я понимаю"
+    if ctx.triggered[0]['prop_id'] == 'disclaimer-ok-button.n_clicks':
+        return {'display': 'none'}, False
+
+    return dash.no_update, dash.no_update
 
 if __name__ == '__main__':
     app.run_server(debug=True)
